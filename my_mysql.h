@@ -79,7 +79,7 @@ typedef struct st_my_res {
 	my_longlong			numrows;
 } MY_RES;
 
-#define MY_CXT_KEY "PAB::DB::Driver::Mysql::_guts" XS_VERSION
+#define MY_CXT_KEY "PAB3::DB::Driver::Mysql::_guts" XS_VERSION
 
 typedef struct st_my_cxt {
 	MY_CON				*con;

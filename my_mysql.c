@@ -594,60 +594,59 @@ char *str_replace( const char *str, const char *search, const char *replace ) {
 	return sz;
 }
 
-#ifndef strrev
-#define strrev _strrev
-char *_strrev( char *str ) {
+char *my_strrev( char *str, size_t len ) {
 	char *p1, *p2;
 	if( ! str || ! *str ) return str;
-	for( p1 = str, p2 = str + strlen( str ) - 1; p2 > p1; ++ p1, -- p2 ) {
+	for( p1 = str, p2 = str + len - 1; p2 > p1; ++ p1, -- p2 ) {
 		*p1 ^= *p2;
 		*p2 ^= *p1;
 		*p1 ^= *p2;
 	}
 	return str;
 }
-#endif
 
 char *my_itoa( char *str, int value, int radix ) {
-	int  rem = 0;
-	int  pos = 0;
-	char ch  = '!' ;
-	do {
-		rem    = value % radix ;
-		value /= radix;
-		if( 16 == radix ) {
-			if( rem >= 10 && rem <= 15 ) {
-				switch( rem ) {
-				case 10:
-					ch = 'a' ;
-					break;
-				case 11:
-					ch ='b' ;
-					break;
-				case 12:
-					ch = 'c' ;
-					break;
-				case 13:
-					ch ='d' ;
-					break;
-				case 14:
-					ch = 'e' ;
-					break;
-				case 15:
-					ch ='f' ;
-					break;
-				}
+	int rem;
+	char *ret = str;
+	switch( radix ) {
+	case 16:
+		do {
+			rem = value % 16;
+			value /= 16;
+			switch( rem ) {
+			case 10:
+				*ret ++ = 'A';
+				break;
+			case 11:
+				*ret ++ = 'B';
+				break;
+			case 12:
+				*ret ++ = 'C';
+				break;
+			case 13:
+				*ret ++ = 'D';
+				break;
+			case 14:
+				*ret ++ = 'E';
+				break;
+			case 15:
+				*ret ++ = 'F';
+				break;
+			default:
+				*ret ++ = (char) ( rem + 0x30 );
+				break;
 			}
-		}
-		if( '!' == ch ) {
-			str[pos ++] = (char) ( rem + 0x30 );
-		}
-		else {
-			str[pos ++] = ch ;
-		}
-	} while( value != 0 );
-	str[pos] = '\0';
-	strrev( str );
-	return &str[pos];
+		} while( value != 0 );
+		break;
+	default:
+		do {
+			rem = value % radix;
+			value /= radix;
+			*ret ++ = (char) ( rem + 0x30 );
+		} while( value != 0 );
+	}
+	*ret = '\0' ;
+	my_strrev( str, ret - str );
+	return ret;
 }
 */

@@ -214,6 +214,10 @@ PREINIT:
 	UV linkid = 0;
 	const char *sql;
 	int try_count = 0, itemp = 0;
+	MY_STMT *stmt;
+	DWORD num_fields, i;
+	MYSQL_FIELD *fields;
+	MYSQL_BIND *bind;
 CODE:
 	switch( items ) {
 	case 2:
@@ -229,13 +233,51 @@ CODE:
 	if( con == NULL ) goto error;
 //MYSQL_VERSION_ID		50116
 retry:
-	RETVAL = (UV) my_mysql_stmt_init( con, sql, strlen( sql ) );
-	if( RETVAL == 0 ) {
+	stmt = my_mysql_stmt_init( con, sql, strlen( sql ) );
+	if( stmt == NULL ) {
 		if( try_count ++ == 0 )
 			RETVAL = my_mysql_handle_return( con, 1 );
 		if( RETVAL != 0 ) goto error;
 		goto retry;
 	}
+	/* bind result */
+	stmt->meta = mysql_stmt_result_metadata( stmt->stmt );
+	if( stmt->meta != NULL ) {
+		stmt->field_count = num_fields =
+			mysql_stmt_field_count( stmt->stmt );
+		fields = mysql_fetch_fields( stmt->meta );
+		Newz( 0, stmt->result, num_fields, MYSQL_BIND );
+		for( i = 0; i < num_fields; i ++ ) {
+			bind = &stmt->result[i];
+			switch( fields[i].type ) {
+			case MYSQL_TYPE_TINY:
+				bind->buffer_type = MYSQL_TYPE_TINY;
+				bind->buffer_length = sizeof( char );
+				break;
+			case MYSQL_TYPE_SHORT:
+				bind->buffer_type = MYSQL_TYPE_SHORT;
+				bind->buffer_length = sizeof( short );
+				break;
+			case MYSQL_TYPE_LONG:
+				bind->buffer_type = MYSQL_TYPE_LONG;
+				bind->buffer_length = sizeof( long );
+				break;
+			case MYSQL_TYPE_FLOAT:
+			case MYSQL_TYPE_DOUBLE:
+				bind->buffer_type = MYSQL_TYPE_DOUBLE;
+				bind->buffer_length = sizeof( double );
+				break;
+			default:
+				bind->buffer_type = MYSQL_TYPE_STRING;
+				bind->buffer_length = fields[i].length;
+				break;
+			}
+			New( 1, bind->length, 1, DWORD );
+			New( 1, bind->buffer, bind->buffer_length, char );
+			New( 1, bind->is_null, 1, my_bool );
+		}
+	}
+	RETVAL = (UV) stmt;
 goto exit;
 error:
 	RETVAL = 0;
@@ -275,9 +317,7 @@ execute( stmtid, ... )
 UV stmtid
 PREINIT:
 	MY_STMT *stmt;
-	DWORD num_fields, i;
-	MYSQL_FIELD *fields;
-	MYSQL_BIND *bind;
+	DWORD i;
 CODE:
 	stmt = (MY_STMT *) stmtid;
 	if( ! my_mysql_stmt_exists( stmt ) ) goto error;
@@ -289,60 +329,15 @@ CODE:
 		RETVAL = mysql_stmt_bind_param( stmt->stmt, stmt->params );
 		if( RETVAL != 0 ) goto error;
 	}
-	// cleanup previous result
-	if( stmt->meta != NULL ) {
-		mysql_free_result( stmt->meta );
-		stmt->meta = NULL;
-		for( i = 0; i < stmt->field_count; i ++ ) {
-			my_mysql_bind_free( &stmt->result[i] );
-		}
-		stmt->field_count = 0;
-		Safefree( stmt->result );
-		stmt->result = NULL;
-	}
 	// execute statement
 	RETVAL = mysql_stmt_execute( stmt->stmt ); 
 	if( RETVAL != 0 ) goto error;
 	// store result
-	stmt->meta = mysql_stmt_result_metadata( stmt->stmt );
-	stmt->numrows = mysql_stmt_affected_rows( stmt->stmt );
 	if( stmt->meta != NULL ) {
-		stmt->field_count = num_fields =
-			mysql_stmt_field_count( stmt->stmt );
-		fields = mysql_fetch_fields( stmt->meta );
-		Newz( 1, stmt->result, num_fields, MYSQL_BIND );
-		for( i = 0; i < num_fields; i ++ ) {
-			bind = &stmt->result[i];
-			switch( fields[i].type ) {
-			case MYSQL_TYPE_TINY:
-				bind->buffer_type = MYSQL_TYPE_TINY;
-				bind->buffer_length = sizeof( char );
-				break;
-			case MYSQL_TYPE_SHORT:
-				bind->buffer_type = MYSQL_TYPE_SHORT;
-				bind->buffer_length = sizeof( short );
-				break;
-			case MYSQL_TYPE_LONG:
-				bind->buffer_type = MYSQL_TYPE_LONG;
-				bind->buffer_length = sizeof( long );
-				break;
-			case MYSQL_TYPE_FLOAT:
-			case MYSQL_TYPE_DOUBLE:
-				bind->buffer_type = MYSQL_TYPE_DOUBLE;
-				bind->buffer_length = sizeof( double );
-				break;
-			default:
-				bind->buffer_type = MYSQL_TYPE_STRING;
-				bind->buffer_length = fields[i].length;
-				break;
-			}
-			New( 1, bind->length, 1, DWORD );
-			New( 1, bind->buffer, bind->buffer_length, char );
-			New( 1, bind->is_null, 1, my_bool );
-		}
 		mysql_stmt_bind_result( stmt->stmt, stmt->result );
 		RETVAL = mysql_stmt_store_result( stmt->stmt );
 		if( RETVAL != 0 ) goto error;
+		stmt->numrows = mysql_stmt_affected_rows( stmt->stmt );
 	}
 	RETVAL = (UV) stmt;
 	goto exit;
