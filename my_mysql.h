@@ -110,7 +110,7 @@ char *my_strcpy( char *dst, const char *src );
 //char *my_itoa( int value, char* str, int radix );
 //char *str_replace( const char *str, const char *search, const char *replace );
 
-#define MY_ERROR_MEMEROY	"Out of memory!",
+MYSQL *pab3_db_driver_mysql_get_handle( UV linkid );
 
 //DWORD my_crc32( const char *str, DWORD len );
 DWORD get_current_thread_id();

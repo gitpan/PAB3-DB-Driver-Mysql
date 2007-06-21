@@ -1,4 +1,7 @@
 Revision history for Perl extension PAB3::DB::Driver::Mysql.
 
+version 1.0.3
+    - added missing file
+
 version 1.0.2
     - fixed misplaced code in prepare() and execute() functions

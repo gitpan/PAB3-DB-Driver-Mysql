@@ -57,6 +57,11 @@ UV _my_verify_linkid( UV linkid, int error ) {
 	return (UV) MY_CXT.lastcon;
 }
 
+MYSQL *pab3_db_driver_mysql_get_handle( UV linkid ) {
+	MY_CON *con = (MY_CON *) my_verify_linkid( linkid );
+	return con != NULL ? con->conid : NULL;
+}
+
 int my_mysql_get_type( UV *ptr ) {
 	dMY_CXT;
 	MY_STMT *s1;
