@@ -19,8 +19,6 @@ BOOT:
 #endif
 }
 
-#define __PACKAGE__ "PAB3::DB::Driver::Mysql"
-
 
 #/******************************************************************************
 # * _connect( [server [, user [, passwd [, db [, client_flag]]]]] )
@@ -72,21 +70,16 @@ CODE:
 			host = tmp;
 		}
 	}
-	/*
-	printf( "host: %s, user: %s, pass: %s, db: %s, port: %d, socket: %s\n",
-		host, user, passwd, db, port, socket );
-	*/
 	mysql_init( mysql );
 	res = mysql_real_connect( mysql, host, user, passwd, db, port, socket, cf );
 	if( res ) {
-		con = my_mysql_con_add( mysql, get_current_thread_id(), client_flag );
-		MY_CXT.lastcon = con;
+		con = my_mysql_con_add( &MY_CXT, mysql, client_flag );
 		RETVAL = (long) con;
 	}
 	else {
 		my_strcpy( MY_CXT.lasterror, mysql_error( mysql ) );
 		MY_CXT.lasterrno = mysql_errno( mysql );
-		MY_CXT.lastcon = NULL;
+		//MY_CXT.lastcon = NULL;
 		Safefree( mysql );
 		RETVAL = 0;
 	}
@@ -104,10 +97,11 @@ UV
 reconnect( linkid = 0 )
 UV linkid
 PREINIT:
+	dMY_CXT;
 	MY_CON *con;
 	MYSQL *res;
 CODE:
-	con = (MY_CON *) my_verify_linkid( linkid );
+	con = (MY_CON *) my_verify_linkid( &MY_CXT, linkid );
 	if( con == NULL ) goto error;
 	res = my_mysql_reconnect( con );
 	if( ! res ) goto error;
@@ -126,19 +120,21 @@ OUTPUT:
 
 int
 close( linkid = 0 )
-UV linkid
+	UV linkid;
+PREINIT:
+	dMY_CXT;
 CODE:
-	switch( my_mysql_get_type( &linkid ) ) {
-	case 1: // result
+	switch( my_mysql_get_type( &MY_CXT, &linkid ) ) {
+	case MY_TYPE_CON:
+		my_mysql_con_rem( &MY_CXT, (MY_CON *) linkid );
+		RETVAL = 1;
+		break;
+	case MY_TYPE_RES:
 		my_mysql_res_rem( (MY_RES *) linkid );
 		RETVAL = 1;
 		break;
-	case 2: // statement
+	case MY_TYPE_STMT:
 		my_mysql_stmt_rem( (MY_STMT *) linkid );
-		RETVAL = 1;
-		break;
-	case 3: // connection
-		my_mysql_con_rem( (MY_CON *) linkid );
 		RETVAL = 1;
 		break;
 	default:
@@ -155,6 +151,7 @@ OUTPUT:
 UV
 query( ... )
 PREINIT:
+	dMY_CXT;
 	const char *sql;
 	UV linkid = 0;
 	MY_CON *con = NULL;
@@ -172,7 +169,7 @@ CODE:
 	default:	
 		Perl_croak( aTHX_ "Usage: " __PACKAGE__ "::query(linkid = 0, query)" );
 	}
-	con = (MY_CON *) my_verify_linkid( linkid );
+	con = (MY_CON *) my_verify_linkid( &MY_CXT, linkid );
 	if( con == NULL ) goto error;
 	sqllen = strlen( sql );
 retry:
@@ -210,6 +207,7 @@ OUTPUT:
 UV
 prepare( ... )
 PREINIT:
+	dMY_CXT;
 	MY_CON *con;
 	UV linkid = 0;
 	const char *sql;
@@ -229,7 +227,7 @@ CODE:
 	default:	
 		Perl_croak( aTHX_ "Usage: " __PACKAGE__ "::prepare(linkid = 0, query)" );
 	}
-	con = (MY_CON *) my_verify_linkid( linkid );
+	con = (MY_CON *) my_verify_linkid( &MY_CXT, linkid );
 	if( con == NULL ) goto error;
 //MYSQL_VERSION_ID		50116
 retry:
@@ -292,15 +290,16 @@ OUTPUT:
 
 int
 bind_param( stmtid, p_num, val = NULL, type = 0 )
-UV stmtid
-unsigned long p_num
-SV *val
-char type
+	UV stmtid;
+	UV p_num;
+	SV *val;
+	char type;
 PREINIT:
+	dMY_CXT;
 	MY_STMT *stmt;
 CODE:
 	stmt = (MY_STMT *) stmtid;
-	if( my_mysql_stmt_exists( stmt ) )
+	if( my_mysql_stmt_exists( &MY_CXT, stmt ) )
 		RETVAL = my_mysql_bind_param( stmt, p_num, val, type );
 	else
 		RETVAL = 0;
@@ -314,13 +313,14 @@ OUTPUT:
 
 UV
 execute( stmtid, ... )
-UV stmtid
+	UV stmtid;
 PREINIT:
+	dMY_CXT;
 	MY_STMT *stmt;
 	DWORD i;
 CODE:
 	stmt = (MY_STMT *) stmtid;
-	if( ! my_mysql_stmt_exists( stmt ) ) goto error;
+	if( ! my_mysql_stmt_exists( &MY_CXT, stmt ) ) goto error;
 	for( i = 1; i < (DWORD) items; i ++ ) {
 		RETVAL = my_mysql_bind_param( stmt, i, ST( i ), 0 );
 		if( RETVAL == 0 ) goto error;
@@ -354,13 +354,15 @@ OUTPUT:
 
 UV
 num_fields( resid )
-UV resid
+	UV resid;
+PREINIT:
+	dMY_CXT;
 CODE:
-	switch( my_mysql_stmt_or_res( resid ) ) {
-	case 1:
+	switch( my_mysql_stmt_or_res( &MY_CXT, resid ) ) {
+	case MY_TYPE_RES:
 		RETVAL = mysql_num_fields( ( (MY_RES *) resid )->res );
 		break;
-	case 2:
+	case MY_TYPE_STMT:
 		RETVAL = mysql_num_fields( ( (MY_STMT *) resid )->meta );
 		break;
 	default:
@@ -377,13 +379,15 @@ OUTPUT:
 
 UV
 num_rows( resid )
-UV resid
+	UV resid;
+PREINIT:
+	dMY_CXT;
 CODE:
-	switch( my_mysql_stmt_or_res( resid ) ) {
-	case 1:
+	switch( my_mysql_stmt_or_res( &MY_CXT, resid ) ) {
+	case MY_TYPE_RES:
 		RETVAL = (UV) ( (MY_RES *) resid )->numrows;
 		break;
-	case 2:
+	case MY_TYPE_STMT:
 		RETVAL = (UV) ( (MY_STMT *) resid )->numrows;
 		break;
 	default:
@@ -400,17 +404,18 @@ OUTPUT:
 
 void
 fetch_names( resid )
-UV resid
-INIT:
+	UV resid;
+PREINIT:
+	dMY_CXT;
 	MYSQL_RES *res = NULL;
 	MYSQL_FIELD *fields;
 	int num_fields, i;
 PPCODE:
-	switch( my_mysql_stmt_or_res( resid ) ) {
-	case 1:
+	switch( my_mysql_stmt_or_res( &MY_CXT, resid ) ) {
+	case MY_TYPE_RES:
 		res = ( (MY_RES *) resid )->res;
 		break;
-	case 2:
+	case MY_TYPE_STMT:
 		res = ( (MY_STMT *) resid )->meta;
 		break;
 	default:
@@ -433,18 +438,19 @@ exit:
 
 void
 fetch_field( resid, offset = -1 )
-UV resid
-long offset
+	UV resid;
+	long offset;
 PREINIT:
+	dMY_CXT;
 	MYSQL_RES *res;
 	MYSQL_FIELD *field;
 	unsigned int flags;
 PPCODE:
-	switch( my_mysql_stmt_or_res( resid ) ) {
-	case 1:
+	switch( my_mysql_stmt_or_res( &MY_CXT, resid ) ) {
+	case MY_TYPE_RES:
 		res = ( (MY_RES *) resid )->res;
 		break;
-	case 2:
+	case MY_TYPE_STMT:
 		res = ( (MY_STMT *) resid )->meta;
 		break;
 	default:
@@ -493,14 +499,16 @@ exit:
 
 UV
 field_seek( resid, offset = 0 )
-UV resid
-long offset
+	UV resid;
+	long offset;
+PREINIT:
+	dMY_CXT;
 CODE:
-	switch( my_mysql_stmt_or_res( resid ) ) {
-	case 1:
+	switch( my_mysql_stmt_or_res( &MY_CXT, resid ) ) {
+	case MY_TYPE_RES:
 		RETVAL = mysql_field_seek( ( (MY_RES *) resid )->res, offset );
 		break;
-	case 2:
+	case MY_TYPE_STMT:
 		RETVAL = mysql_field_seek( ( (MY_STMT *) resid )->meta, offset );
 		break;
 	default:
@@ -517,13 +525,15 @@ OUTPUT:
 
 UV
 field_tell( resid )
-UV resid
+	UV resid;
+PREINIT:
+	dMY_CXT;
 CODE:
-	switch( my_mysql_stmt_or_res( resid ) ) {
-	case 1:
+	switch( my_mysql_stmt_or_res( &MY_CXT, resid ) ) {
+	case MY_TYPE_RES:
 		RETVAL = mysql_field_tell( ( (MY_RES *) resid )->res );
 		break;
-	case 2:
+	case MY_TYPE_STMT:
 		RETVAL = mysql_field_tell( ( (MY_STMT *) resid )->meta );
 		break;
 	default:
@@ -540,8 +550,9 @@ OUTPUT:
 
 void
 fetch_row( resid )
-UV resid
+	UV resid;
 PREINIT:
+	dMY_CXT;
 	MY_RES *res;
 	MYSQL_ROW row;
 	unsigned long *lengths;
@@ -549,8 +560,8 @@ PREINIT:
 	MYSQL_BIND *result;
 	DWORD num_fields, i;
 PPCODE:
-	switch( my_mysql_stmt_or_res( resid ) ) {
-	case 1: // normal result
+	switch( my_mysql_stmt_or_res( &MY_CXT, resid ) ) {
+	case MY_TYPE_RES:
 		res = (MY_RES *) resid;
 		row = mysql_fetch_row( res->res );
 		if( ! row ) goto error;
@@ -565,7 +576,7 @@ PPCODE:
 		}
 		res->rowpos ++;
 		break;
-	case 2: // statement
+	case MY_TYPE_STMT:
 		stmt = (MY_STMT *) resid;
 		if( mysql_stmt_fetch( stmt->stmt ) != 0 ) goto error;
 		EXTEND( SP, stmt->field_count );
@@ -614,16 +625,17 @@ error:
 
 void
 fetch_col( resid )
-UV resid
+	UV resid;
 PREINIT:
+	dMY_CXT;
 	MY_RES *res;
 	MYSQL_ROW row;
 	DWORD *lengths;
 	MY_STMT *stmt;
 	MYSQL_BIND *result;
 PPCODE:
-	switch( my_mysql_stmt_or_res( resid ) ) {
-	case 1: // normal result
+	switch( my_mysql_stmt_or_res( &MY_CXT, resid ) ) {
+	case MY_TYPE_RES:
 		res = (MY_RES *) resid;
 		EXTEND( SP, res->numrows );
 		while( ( row = mysql_fetch_row( res->res ) ) ) {
@@ -635,7 +647,7 @@ PPCODE:
 		}
 		res->rowpos = res->numrows;
 		break;
-	case 2: // statement
+	case MY_TYPE_STMT:
 		stmt = (MY_STMT *) resid;
 		EXTEND( SP, stmt->numrows );
 		while( mysql_stmt_fetch( stmt->stmt ) == 0 ) {
@@ -681,8 +693,9 @@ PPCODE:
 
 void
 fetch_hash( resid )
-UV resid
+	UV resid;
 PREINIT:
+	dMY_CXT;
 	MY_RES *res;
 	MYSQL_ROW row;
 	MYSQL_FIELD *fields;
@@ -691,8 +704,8 @@ PREINIT:
 	unsigned long *lengths;
 	DWORD num_fields, i;
 PPCODE:
-	switch( my_mysql_stmt_or_res( resid ) ) {
-	case 1: // normal result
+	switch( my_mysql_stmt_or_res( &MY_CXT, resid ) ) {
+	case MY_TYPE_RES:
 		res = (MY_RES *) resid;
 		row = mysql_fetch_row( res->res );
 		if( ! row ) goto error;
@@ -711,7 +724,7 @@ PPCODE:
 		}
 		res->rowpos ++;
 		break;
-	case 2: // statement
+	case MY_TYPE_STMT:
 		stmt = (MY_STMT *) resid;
 		if( mysql_stmt_fetch( stmt->stmt ) != 0 ) goto error;
 		fields = mysql_fetch_fields( stmt->meta );
@@ -764,14 +777,15 @@ error:
 
 void
 fetch_lengths( resid )
-UV resid
+	UV resid;
 PREINIT:
+	dMY_CXT;
 	unsigned long *lengths;
 	DWORD num_fields, i;
 	MY_STMT *stmt;
 PPCODE:
-	switch( my_mysql_stmt_or_res( resid ) ) {
-	case 1: // normal result
+	switch( my_mysql_stmt_or_res( &MY_CXT, resid ) ) {
+	case MY_TYPE_RES:
 		lengths = mysql_fetch_lengths( ( (MY_RES *) resid )->res );
 		if( lengths ) {
 			num_fields = mysql_num_fields( ( (MY_RES *) resid )->res );
@@ -781,7 +795,7 @@ PPCODE:
 			}
 		}
 		break;
-	case 2: // statement
+	case MY_TYPE_STMT:
 		stmt = (MY_STMT *) resid;
 		EXTEND( SP, stmt->field_count );
 		for( i = 0; i < stmt->field_count; i ++ ) {
@@ -796,14 +810,15 @@ PPCODE:
 
 int
 row_seek( resid, offset = 0 )
-UV resid
-UV offset
+	UV resid;
+	UV offset;
 PREINIT:
+	dMY_CXT;
 	MY_RES *res;
 	MY_STMT *stmt;
 CODE:
-	switch( my_mysql_stmt_or_res( resid ) ) {
-	case 1: // normal result
+	switch( my_mysql_stmt_or_res( &MY_CXT, resid ) ) {
+	case MY_TYPE_RES:
 		res = (MY_RES *) resid;
 		if( offset >= (DWORD) res->numrows )
 			offset = (DWORD) res->numrows - 1;
@@ -811,7 +826,7 @@ CODE:
 		res->rowpos = offset;
 		RETVAL = 1;
 		break;
-	case 2: // statement
+	case MY_TYPE_STMT:
 		stmt = (MY_STMT *) resid;
 		if( offset >= (DWORD) stmt->numrows )
 			offset = (DWORD) stmt->numrows - 1;
@@ -832,13 +847,15 @@ OUTPUT:
 
 UV
 row_tell( resid )
-UV resid
+	UV resid;
+PREINIT:
+	dMY_CXT;
 CODE:
-	switch( my_mysql_stmt_or_res( resid ) ) {
-	case 1: // normal result
+	switch( my_mysql_stmt_or_res( &MY_CXT, resid ) ) {
+	case MY_TYPE_RES:
 		RETVAL = (UV) ( (MY_RES *) resid )->rowpos;
 		break;
-	case 2: // statement
+	case MY_TYPE_STMT:
 		RETVAL = (UV) ( (MY_STMT *) resid )->rowpos;
 		break;
 	default:
@@ -854,14 +871,16 @@ OUTPUT:
 
 int
 free_result( resid )
-UV resid
+	UV resid;
+PREINIT:
+	dMY_CXT;
 CODE:
-	switch( my_mysql_stmt_or_res( resid ) ) {
-	case 1: // normal result
+	switch( my_mysql_stmt_or_res( &MY_CXT, resid ) ) {
+	case MY_TYPE_RES:
 		my_mysql_res_rem( (MY_RES *) resid );
 		RETVAL = 1;
 		break;
-	case 2: // statement
+	case MY_TYPE_STMT:
 		my_mysql_stmt_rem( (MY_STMT *) resid );
 		RETVAL = 1;
 		break;
@@ -878,17 +897,19 @@ OUTPUT:
 
 UV
 insert_id( linkid = 0, field = NULL, table = NULL, schema = NULL )
-UV linkid
-const char *field
-const char *table
-const char *schema
+	UV linkid;
+	const char *field;
+	const char *table;
+	const char *schema;
+PREINIT:
+	dMY_CXT;
 CODE:
-	switch( my_mysql_stmt_or_con( &linkid ) ) {
-	case 2: // statement
-		RETVAL = (UV) mysql_stmt_insert_id( ( (MY_STMT *) linkid )->stmt );
-		break;
-	case 3: // connection
+	switch( my_mysql_stmt_or_con( &MY_CXT, &linkid ) ) {
+	case MY_TYPE_CON:
 		RETVAL = (UV) mysql_insert_id( ( (MY_CON *) linkid )->conid );
+		break;
+	case MY_TYPE_STMT:
+		RETVAL = (UV) mysql_stmt_insert_id( ( (MY_STMT *) linkid )->stmt );
 		break;
 	default:
 		RETVAL = 0;
@@ -903,14 +924,16 @@ OUTPUT:
 
 UV
 affected_rows( linkid = 0 )
-UV linkid
+	UV linkid;
+PREINIT:
+	dMY_CXT;
 CODE:
-	switch( my_mysql_stmt_or_con( &linkid ) ) {
-	case 2: // statement
-		RETVAL = (UV) mysql_stmt_affected_rows( ( (MY_STMT *) linkid )->stmt );
-		break;
-	case 3: // connection
+	switch( my_mysql_stmt_or_con( &MY_CXT, &linkid ) ) {
+	case MY_TYPE_CON:
 		RETVAL = (UV) mysql_affected_rows( ( (MY_CON *) linkid )->conid );
+		break;
+	case MY_TYPE_STMT:
+		RETVAL = (UV) mysql_stmt_affected_rows( ( (MY_STMT *) linkid )->stmt );
 		break;
 	default:
 		RETVAL = 0;
@@ -1010,6 +1033,7 @@ CLEANUP:
 void
 escape( ... )
 PREINIT:
+	dMY_CXT;
 	char *tmp = 0;
 	DWORD len;
 	const char *val;
@@ -1025,7 +1049,7 @@ CODE:
 		linkid = (UV) SvUV( ST(0) );
 	    val = (const char *) SvPV_nolen( ST(1) );
 	}
-	if( ! ( linkid = my_verify_linkid( linkid ) ) ) goto error;
+	if( ! ( linkid = my_verify_linkid( &MY_CXT, linkid ) ) ) goto error;
 	len = strlen( val );
 	New( 1, tmp, len * 2 + 1, char );
 	len = mysql_real_escape_string( ( (MY_CON *) linkid )->conid, tmp, val, len );
@@ -1043,10 +1067,12 @@ CLEANUP:
 int
 set_charset( ... )
 PREINIT:
+	dMY_CXT;
 	const char *charset;
 	UV linkid = 0;
 	MY_CON *con;
-	unsigned long version, sqllen, cslen;
+	unsigned long version, sqllen;
+	STRLEN cslen;
 	int res, itemp = 0;
 	char *sql, *p1;
 CODE:
@@ -1056,8 +1082,8 @@ CODE:
 		linkid = (UV) SvUV( ST( itemp ) );
 		itemp ++;
 	}
-    charset = (const char *) SvPV_nolen( ST( itemp ) );
-	con = (MY_CON *) my_verify_linkid( linkid );
+    charset = (const char *) SvPVx( ST( itemp ), cslen );
+	con = (MY_CON *) my_verify_linkid( &MY_CXT, linkid );
 	if( con == NULL ) goto error;
 	version = mysql_get_server_version( con->conid );
 	// 5.1.5 -> 50105 
@@ -1066,7 +1092,6 @@ CODE:
 		RETVAL = 1;
 		goto exit;
 	}
-	cslen = strlen( charset );
 	// SET NAMES 'xxx'
 	sqllen = cslen + 12;
 	New( 1, sql, sqllen + 1, char );
@@ -1095,9 +1120,11 @@ OUTPUT:
 
 const char *
 get_charset( linkid = 0 )
-UV linkid
+	UV linkid;
+PREINIT:
+	dMY_CXT;
 CODE:
-	RETVAL = ( linkid = my_verify_linkid( linkid ) )
+	RETVAL = ( linkid = my_verify_linkid( &MY_CXT, linkid ) )
 		? ( (MY_CON *) linkid )->charset
 		: NULL
 	;
@@ -1111,12 +1138,13 @@ OUTPUT:
 
 int
 auto_commit( linkid = 0, mode = 1 )
-UV linkid;
-int mode;
+	UV linkid;
+	int mode;
 PREINIT:
+	dMY_CXT;
 	MY_CON *con;
 CODE:
-	con = (MY_CON *) my_verify_linkid( linkid );
+	con = (MY_CON *) my_verify_linkid( &MY_CXT, linkid );
 	if( con == NULL ) goto error;
 	if( mode ) {
 		if( ( con->my_flags & MYCF_AUTOCOMMIT ) == 0 ) {
@@ -1147,11 +1175,12 @@ OUTPUT:
 
 int
 begin_work( linkid = 0 )
-UV linkid
+	UV linkid;
 PREINIT:
+	dMY_CXT;
 	MY_CON *con;
 CODE:
-	if( ! ( linkid = my_verify_linkid( linkid ) ) ) goto error;
+	if( ! ( linkid = my_verify_linkid( &MY_CXT, linkid ) ) ) goto error;
 	con = (MY_CON *) linkid;
 	if( ( con->my_flags & MYCF_TRANSACTION ) == 0 ) {
 		int r = mysql_autocommit( con->conid, FALSE );
@@ -1173,11 +1202,12 @@ OUTPUT:
 
 int
 commit( linkid = 0 )
-UV linkid
+	UV linkid;
 PREINIT:
+	dMY_CXT;
 	MY_CON *con;
 CODE:
-	if( ! ( linkid = my_verify_linkid( linkid ) ) ) goto error;
+	if( ! ( linkid = my_verify_linkid( &MY_CXT, linkid ) ) ) goto error;
 	con = (MY_CON *) linkid;
 	if( ( con->my_flags & MYCF_TRANSACTION ) != 0 ) {
 		int r = mysql_commit( con->conid );
@@ -1203,11 +1233,12 @@ OUTPUT:
 
 int
 rollback( linkid = 0 )
-UV linkid
+	UV linkid;
 PREINIT:
+	dMY_CXT;
 	MY_CON *con;
 CODE:
-	if( ! ( linkid = my_verify_linkid( linkid ) ) ) goto error;
+	if( ! ( linkid = my_verify_linkid( &MY_CXT, linkid ) ) ) goto error;
 	con = (MY_CON *) linkid;
 	if( ( con->my_flags & MYCF_TRANSACTION ) != 0 ) {
 		int r = mysql_rollback( con->conid );
@@ -1233,14 +1264,15 @@ OUTPUT:
 
 void
 show_catalogs( linkid = 0, wild = NULL )
-UV linkid
-const char *wild
+	UV linkid;
+	const char *wild;
 PREINIT:
+	dMY_CXT;
 	MY_CON *con;
 	MYSQL_RES *res;
 	MYSQL_ROW row;
 PPCODE:
-	if( ! ( linkid = my_verify_linkid( linkid ) ) ) goto error;
+	if( ! ( linkid = my_verify_linkid( &MY_CXT, linkid ) ) ) goto error;
 	con = (MY_CON *) linkid;
 	res = mysql_list_dbs( con->conid, wild );
 	if( res ) {
@@ -1261,18 +1293,19 @@ error:
 
 void
 show_tables( linkid = 0, schema = NULL, db = NULL, wild = NULL )
-UV linkid
-const char *db
-const char *schema
-const char *wild
+	UV linkid;
+	const char *db;
+	const char *schema;
+	const char *wild;
 PREINIT:
+	dMY_CXT;
 	MY_CON *con;
 	MYSQL_RES *res;
 	MYSQL_ROW row;
 	char sql[512], *p1;
 	AV *av;
 PPCODE:
-	if( ! ( linkid = my_verify_linkid( linkid ) ) ) goto error;
+	if( ! ( linkid = my_verify_linkid( &MY_CXT, linkid ) ) ) goto error;
 	con = (MY_CON *) linkid;
 	if( db && db[0] != '\0' ) {
 		p1 = my_strcpy( sql, "SHOW TABLES FROM `" );
@@ -1318,6 +1351,7 @@ error:
 void
 show_fields( ... )
 PREINIT:
+	dMY_CXT;
 	UV linkid = 0;
 	const char *table = NULL;
 	const char *schema = NULL;
@@ -1349,7 +1383,7 @@ PPCODE:
 	}
 	if( itemp < items )
 		wild = (const char *) SvPV_nolen( ST( itemp ) );
-	con = (MY_CON *) my_verify_linkid( linkid );
+	con = (MY_CON *) my_verify_linkid( &MY_CXT, linkid );
 	if( con == NULL ) goto error;
 	p1 = my_strcpy( sql, "SHOW COLUMNS FROM `" );
 	p1 = my_strcpy( p1, table );
@@ -1393,6 +1427,7 @@ error:
 void
 show_index( ... )
 PREINIT:
+	dMY_CXT;
 	UV linkid = 0;
 	const char *table = NULL;
 	const char *schema = NULL;
@@ -1419,7 +1454,7 @@ PPCODE:
 	}
 	if( itemp < items )
 		db = (const char *) SvPV_nolen( ST( itemp ) );
-	con = (MY_CON *) my_verify_linkid( linkid );
+	con = (MY_CON *) my_verify_linkid( &MY_CXT, linkid );
 	if( con == NULL ) goto error;
 	// SHOW INDEX FROM table FROM db
 	p1 = my_strcpy( sql, "SHOW INDEX FROM `" );
@@ -1534,7 +1569,7 @@ UV linkid
 PREINIT:
 	dMY_CXT;
 CODE:
-	RETVAL = ( linkid = my_verify_linkid_noerror( linkid ) )
+	RETVAL = ( linkid = my_verify_linkid_noerror( &MY_CXT, linkid ) )
 		? mysql_errno( ( (MY_CON *) linkid )->conid )
 		: MY_CXT.lasterrno
 	;
@@ -1554,7 +1589,7 @@ PREINIT:
 	MY_CON *con;
 	const char *error;
 CODE:
-	con = (MY_CON *) my_verify_linkid_noerror( linkid );
+	con = (MY_CON *) my_verify_linkid_noerror( &MY_CXT, linkid );
 	if( con != NULL ) {
 		error = mysql_error( con->conid );
 		if( error[0] == '\0' ) error = con->my_error;
@@ -1578,7 +1613,7 @@ PREINIT:
 	dMY_CXT;
 CODE:
 	if( MY_CXT.con )
-		my_mysql_cleanup();
+		my_mysql_cleanup( &MY_CXT );
 #ifdef USE_THREADS
 	//MUTEX_DESTROY( &MY_CXT.thread_lock );
 #endif
@@ -1590,5 +1625,7 @@ CODE:
 
 void
 _session_cleanup()
+PREINIT:
+	dMY_CXT;
 CODE:
-	my_mysql_cleanup_connections();
+	my_mysql_cleanup_connections( &MY_CXT );

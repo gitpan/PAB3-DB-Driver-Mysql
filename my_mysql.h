@@ -13,6 +13,8 @@
 
 #include <mysql.h>
 
+#define __PACKAGE__ "PAB3::DB::Driver::Mysql"
+
 static const my_bool MYBOOL_TRUE	= 1;
 static const my_bool MYBOOL_FALSE	= 0;
 
@@ -21,9 +23,12 @@ static const my_bool MYBOOL_FALSE	= 0;
 #define MYCF_TRANSACTION	1
 #define MYCF_AUTOCOMMIT		2
 
-#ifndef DWORD
+#define MY_TYPE_CON		1
+#define MY_TYPE_RES		2
+#define MY_TYPE_STMT	3
+
+#undef DWORD
 #define DWORD unsigned long
-#endif
 
 #ifndef my_longlong
 #if defined __unix__
@@ -79,7 +84,7 @@ typedef struct st_my_res {
 	my_longlong			numrows;
 } MY_RES;
 
-#define MY_CXT_KEY "PAB3::DB::Driver::Mysql::_guts" XS_VERSION
+#define MY_CXT_KEY __PACKAGE__ "::_guts" XS_VERSION
 
 typedef struct st_my_cxt {
 	MY_CON				*con;
@@ -87,7 +92,7 @@ typedef struct st_my_cxt {
 	char				lasterror[256];
 	unsigned int		lasterrno;
 #ifdef USE_THREADS
-	perl_mutex			thread_lock;
+	//perl_mutex			thread_lock;
 #endif
 } my_cxt_t;
 
@@ -110,37 +115,39 @@ char *my_strcpy( char *dst, const char *src );
 //char *my_itoa( int value, char* str, int radix );
 //char *str_replace( const char *str, const char *search, const char *replace );
 
-MYSQL *pab3_db_driver_mysql_get_handle( UV linkid );
-
 //DWORD my_crc32( const char *str, DWORD len );
 DWORD get_current_thread_id();
-void my_set_error( const char *tpl, ... );
-UV _my_verify_linkid( UV linkid, int error );
-#define my_verify_linkid(linkid)	_my_verify_linkid( (linkid), 1 )
-#define my_verify_linkid_noerror(linkid)	_my_verify_linkid( (linkid), 0 )
-int my_mysql_get_type( UV *ptr );
+void my_set_error( my_cxt_t *cxt, const char *tpl, ... );
 
-void my_mysql_cleanup();
-void my_mysql_cleanup_connections();
+#define my_verify_linkid(cxt,linkid) \
+	_my_verify_linkid( (cxt), (linkid), 1 )
+#define my_verify_linkid_noerror(cxt,linkid) \
+	_my_verify_linkid( (cxt), (linkid), 0 )
+UV _my_verify_linkid( my_cxt_t *cxt, UV linkid, int error );
+
+int my_mysql_get_type( my_cxt_t *cxt, UV *ptr );
+
+void my_mysql_cleanup( my_cxt_t *cxt );
+void my_mysql_cleanup_connections( my_cxt_t *cxt );
 MYSQL *my_mysql_reconnect( MY_CON *con );
 
-MY_CON *my_mysql_con_add( MYSQL *mysql, DWORD tid, DWORD client_flag );
-void my_mysql_con_rem( MY_CON *con );
-MY_CON *my_mysql_con_find_by_tid( DWORD tid );
+MY_CON *my_mysql_con_add( my_cxt_t *cxt, MYSQL *mysql, DWORD client_flag );
+void my_mysql_con_rem( my_cxt_t *cxt, MY_CON *con );
+MY_CON *my_mysql_con_find_by_tid( my_cxt_t *cxt, DWORD tid );
 void my_mysql_con_free( MY_CON *con );
 void my_mysql_con_cleanup( MY_CON *con );
-int my_mysql_con_exists( MY_CON *con );
+int my_mysql_con_exists( my_cxt_t *cxt, MY_CON *con );
 
 MY_RES *my_mysql_res_add( MY_CON *con, MYSQL_RES *res );
 void my_mysql_res_rem( MY_RES *res );
-int my_mysql_res_exists( MY_RES *res );
+int my_mysql_res_exists( my_cxt_t *cxt, MY_RES *res );
 
 MY_STMT *my_mysql_stmt_init( MY_CON *con, const char *query, DWORD length );
 void my_mysql_stmt_free( MY_STMT *stmt );
-int my_mysql_stmt_exists( MY_STMT *stmt );
+int my_mysql_stmt_exists( my_cxt_t *cxt, MY_STMT *stmt );
 void my_mysql_stmt_rem( MY_STMT *stmt );
-int my_mysql_stmt_or_res( UV ptr );
-int my_mysql_stmt_or_con( UV *ptr );
+int my_mysql_stmt_or_res( my_cxt_t *cxt, UV ptr );
+int my_mysql_stmt_or_con( my_cxt_t *cxt, UV *ptr );
 
 int my_mysql_bind_param( MY_STMT *stmt, DWORD p_num, SV *val, char type );
 void my_mysql_bind_free( MYSQL_BIND *bind );

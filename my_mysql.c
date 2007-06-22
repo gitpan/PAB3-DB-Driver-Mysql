@@ -22,95 +22,84 @@ void _refbuf_add( struct st_refbuf *rbs, struct st_refbuf *rbd );
 void _refbuf_rem( struct st_refbuf *rb );
 
 
-void my_set_error( const char *tpl, ... ) {
-	dMY_CXT;
+void my_set_error( my_cxt_t *cxt, const char *tpl, ... ) {
 	va_list ap;
-	MY_CON *con = my_mysql_con_find_by_tid( get_current_thread_id() );
+	MY_CON *con = my_mysql_con_find_by_tid( cxt, get_current_thread_id() );
 	va_start( ap, tpl );
 	if( con != NULL )
 		vsprintf( con->my_error, tpl, ap );
 	else
-		vsprintf( MY_CXT.lasterror, tpl, ap );
+		vsprintf( cxt->lasterror, tpl, ap );
 	va_end( ap );
 }
 
-UV _my_verify_linkid( UV linkid, int error ) {
-	dMY_CXT;
+UV _my_verify_linkid( my_cxt_t *cxt, UV linkid, int error ) {
 	if( linkid ) {
-		return my_mysql_con_exists( (MY_CON *) linkid ) ? linkid : 0;
+		return my_mysql_con_exists( cxt, (MY_CON *) linkid ) ? linkid : 0;
 	}
 #ifdef USE_THREADS
 	else {
-		linkid = (UV) my_mysql_con_find_by_tid( get_current_thread_id() );
+		linkid = (UV) my_mysql_con_find_by_tid( cxt, get_current_thread_id() );
 		if( linkid )
 			return linkid;
 		if( error )
-			sprintf( MY_CXT.lasterror, "No connection exists" );
+			sprintf( cxt->lasterror, "No connection found" );
 		return 0;
 	}
 #endif
-	if( ! MY_CXT.lastcon ) {
+	if( ! cxt->lastcon ) {
 		if( error )
-			sprintf( MY_CXT.lasterror, "No connection exists" );
+			sprintf( cxt->lasterror, "No connection found" );
 		return 0;
 	}
-	return (UV) MY_CXT.lastcon;
+	return (UV) cxt->lastcon;
 }
 
-MYSQL *pab3_db_driver_mysql_get_handle( UV linkid ) {
-	MY_CON *con = (MY_CON *) my_verify_linkid( linkid );
-	return con != NULL ? con->conid : NULL;
-}
-
-int my_mysql_get_type( UV *ptr ) {
-	dMY_CXT;
+int my_mysql_get_type( my_cxt_t *cxt, UV *ptr ) {
 	MY_STMT *s1;
 	MY_CON *c1;
 	MY_RES *r1;
 	if( ! *ptr ) {
-		*ptr = my_verify_linkid( *ptr );
+		*ptr = my_verify_linkid( cxt, *ptr );
 		return *ptr != 0 ? 3 : 0;
 	}
-	for( c1 = MY_CXT.con; c1 != NULL; c1 = c1->next ) {
-		if( (UV) c1 == *ptr ) return 3;
+	for( c1 = cxt->con; c1 != NULL; c1 = c1->next ) {
+		if( (UV) c1 == *ptr ) return MY_TYPE_CON;
 		for( r1 = c1->res; r1 != NULL; r1 = r1->next )
-			if( (UV) r1 == *ptr ) return 1;
+			if( (UV) r1 == *ptr ) return MY_TYPE_RES;
 		for( s1 = c1->first_stmt; s1 != NULL; s1 = s1->next )
-			if( (UV) s1 == *ptr ) return 2;
+			if( (UV) s1 == *ptr ) return MY_TYPE_STMT;
 	}
-	my_set_error( "Link ID 0x%06X is unknown", *ptr );
+	my_set_error( cxt, "Unknown link ID 0x%07X", *ptr );
 	return 0;
 }
 
-void my_mysql_cleanup() {
+void my_mysql_cleanup( my_cxt_t *cxt ) {
 	MY_CON *c1, *c2;
-	dMY_CXT;
-	c1 = MY_CXT.con;
+	c1 = cxt->con;
 	while( c1 ) {
 		c2 = c1->next;
 		my_mysql_con_free( c1 );
 		c1 = c2;
 	}
-	MY_CXT.lastcon = MY_CXT.con = 0;
-	//Safefree( MY_CXT.lasterror );
+	cxt->lastcon = cxt->con = 0;
+	//Safefree( cxt->lasterror );
 }
 
-void my_mysql_cleanup_connections() {
+void my_mysql_cleanup_connections( my_cxt_t *cxt ) {
 	MY_CON *c1;
-	dMY_CXT;
-	c1 = MY_CXT.con;
+	c1 = cxt->con;
 	while( c1 ) {
 		my_mysql_con_cleanup( c1 );
 		c1 = c1->next;
 	}
 }
 
-MY_CON *my_mysql_con_add( MYSQL *mysql, DWORD tid, DWORD client_flag ) {
-	dMY_CXT;
+MY_CON *my_mysql_con_add( my_cxt_t *cxt, MYSQL *mysql, DWORD client_flag ) {
 	MY_CON *con;
 	Newz( 1, con, 1, MY_CON );
 	con->conid = mysql;
-	con->tid = tid;
+	con->tid = get_current_thread_id();
 	con->client_flag = client_flag;
 	STR_CREATEANDCOPY( mysql->host, con->host );
 	STR_CREATEANDCOPY( mysql->user, con->user );
@@ -119,11 +108,11 @@ MY_CON *my_mysql_con_add( MYSQL *mysql, DWORD tid, DWORD client_flag ) {
 	STR_CREATEANDCOPY( mysql->db, con->db );
 	con->port = mysql->port;
 	con->my_flags = MYCF_AUTOCOMMIT;
-	if( MY_CXT.con == NULL )
-		MY_CXT.con = con;
+	if( cxt->con == NULL )
+		cxt->con = con;
 	else
-		refbuf_add( MY_CXT.lastcon, con );
-	MY_CXT.lastcon = con;
+		refbuf_add( cxt->lastcon, con );
+	cxt->lastcon = con;
 	return con;
 }
 
@@ -141,12 +130,11 @@ void my_mysql_con_free( MY_CON *con ) {
 	Safefree( con );
 }
 
-void my_mysql_con_rem( MY_CON *con ) {
-	dMY_CXT;
-	if( con == MY_CXT.lastcon )
-		MY_CXT.lastcon = con->prev;
-	if( con == MY_CXT.con )
-		MY_CXT.con = con->next;
+void my_mysql_con_rem( my_cxt_t *cxt, MY_CON *con ) {
+	if( con == cxt->lastcon )
+		cxt->lastcon = con->prev;
+	if( con == cxt->con )
+		cxt->con = con->next;
 	refbuf_rem( con );
 	my_mysql_con_free( con );
 }
@@ -171,19 +159,17 @@ void my_mysql_con_cleanup( MY_CON *con ) {
 	con->res = con->lastres = NULL;
 }
 
-int my_mysql_con_exists( MY_CON *con ) {
-	dMY_CXT;
+int my_mysql_con_exists( my_cxt_t *cxt, MY_CON *con ) {
 	MY_CON *c1;
-	for( c1 = MY_CXT.con; c1 != NULL; c1 = c1->next )
-		if( con == c1 ) return 1;
-	my_set_error( "Connection ID 0x%06X does not exist", con );
+	for( c1 = cxt->con; c1 != NULL; c1 = c1->next )
+		if( con == c1 ) return MY_TYPE_CON;
+	my_set_error( cxt, "Unknown connection ID 0x%07X", con );
 	return 0;
 }
 
-MY_CON *my_mysql_con_find_by_tid( DWORD tid ) {
-	dMY_CXT;
+MY_CON *my_mysql_con_find_by_tid( my_cxt_t *cxt, DWORD tid ) {
 	MY_CON *c1;
-	for( c1 = MY_CXT.con; c1 != NULL; c1 = c1->next )
+	for( c1 = cxt->con; c1 != NULL; c1 = c1->next )
 		if( c1->tid == tid ) return c1;
 	return NULL;
 }
@@ -205,7 +191,7 @@ MY_RES *my_mysql_res_add( MY_CON *con, MYSQL_RES *res ) {
 void my_mysql_res_rem( MY_RES *res ) {
 	MY_CON *con;
 	if( res == NULL ) return;
-//	printf( "mysql free result 0x%06X\n", res );
+//	printf( "mysql free result 0x%07X\n", res );
 	mysql_free_result( res->res );
 	con = res->con;
 	if( con->lastres == res )
@@ -216,17 +202,16 @@ void my_mysql_res_rem( MY_RES *res ) {
 	Safefree( res );
 }
 
-int my_mysql_res_exists( MY_RES *res ) {
-	dMY_CXT;
+int my_mysql_res_exists( my_cxt_t *cxt, MY_RES *res ) {
 	MY_RES *r1;
 	MY_CON *c1;
 	if( res != NULL ) {
-		for( c1 = MY_CXT.con; c1 != NULL; c1 = c1->next ) {
+		for( c1 = cxt->con; c1 != NULL; c1 = c1->next ) {
 			for( r1 = c1->res; r1 != NULL; r1 = r1->next )
 				if( r1 == res ) return 1;
 		}
 	}
-	my_set_error( "Result ID 0x%06X is unknown", res );
+	my_set_error( cxt, "Unknown result ID 0x%07X", res );
 	return 0;
 }
 
@@ -312,51 +297,48 @@ void my_mysql_stmt_rem( MY_STMT *stmt ) {
 	my_mysql_stmt_free( stmt );
 }
 
-int my_mysql_stmt_exists( MY_STMT *stmt ) {
-	dMY_CXT;
+int my_mysql_stmt_exists( my_cxt_t *cxt, MY_STMT *stmt ) {
 	MY_STMT *s1;
 	MY_CON *c1;
 	if( stmt != NULL ) {
-		for( c1 = MY_CXT.con; c1 != NULL; c1 = c1->next ) {
+		for( c1 = cxt->con; c1 != NULL; c1 = c1->next ) {
 			for( s1 = c1->first_stmt; s1 != NULL; s1 = s1->next )
-				if( s1 == stmt ) return 2;
+				if( s1 == stmt ) return MY_TYPE_STMT;
 		}
 	}
-	my_set_error( "Statement ID 0x%06X is unknown", stmt );
+	my_set_error( cxt, "Unknown statement ID 0x%07X", stmt );
 	return 0;
 }
 
-int my_mysql_stmt_or_res( UV ptr ) {
-	dMY_CXT;
+int my_mysql_stmt_or_res( my_cxt_t *cxt, UV ptr ) {
 	MY_RES *r1;
 	MY_STMT *s1;
 	MY_CON *c1;
 	if( ptr != 0 ) {
-		for( c1 = MY_CXT.con; c1 != NULL; c1 = c1->next ) {
+		for( c1 = cxt->con; c1 != NULL; c1 = c1->next ) {
 			for( r1 = c1->res; r1 != NULL; r1 = r1->next )
-				if( (UV) r1 == ptr ) return 1;
+				if( (UV) r1 == ptr ) return MY_TYPE_RES;
 			for( s1 = c1->first_stmt; s1 != NULL; s1 = s1->next )
-				if( (UV) s1 == ptr ) return 2;
+				if( (UV) s1 == ptr ) return MY_TYPE_STMT;
 		}
 	}
-	my_set_error( "ID 0x%06X is unknown", ptr );
+	my_set_error( cxt, "Unknown result or statement ID 0x%07X", ptr );
 	return 0;
 }
 
-int my_mysql_stmt_or_con( UV *ptr ) {
-	dMY_CXT;
+int my_mysql_stmt_or_con( my_cxt_t *cxt, UV *ptr ) {
 	MY_STMT *s1;
 	MY_CON *c1;
 	if( ! *ptr ) {
-		*ptr = my_verify_linkid( *ptr );
+		*ptr = my_verify_linkid( cxt, *ptr );
 		return *ptr != 0 ? 3 : 0;
 	}
-	for( c1 = MY_CXT.con; c1 != NULL; c1 = c1->next ) {
-		if( (UV) c1 == *ptr ) return 3;
+	for( c1 = cxt->con; c1 != NULL; c1 = c1->next ) {
+		if( (UV) c1 == *ptr ) return MY_TYPE_CON;
 		for( s1 = c1->first_stmt; s1 != NULL; s1 = s1->next )
-			if( (UV) s1 == *ptr ) return 2;
+			if( (UV) s1 == *ptr ) return MY_TYPE_STMT;
 	}
-	my_set_error( "ID 0x%06X is unknown", *ptr );
+	my_set_error( cxt, "Unknown statement or connection ID 0x%07X", *ptr );
 	return 0;
 }
 
@@ -367,7 +349,7 @@ int my_mysql_bind_param( MY_STMT *stmt, DWORD p_num, SV *val, char type ) {
 	if( stmt->stmt == NULL ) return 0;
 	if( p_num == 0 || stmt->param_count < p_num ) {
 		sprintf( stmt->con->my_error,
-			"Parameter %lu is not in range (%lu)",
+			"Parameter %lu out of range (%lu)",
 			p_num, stmt->param_count
 		);
 		return 0;
