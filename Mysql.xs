@@ -24,7 +24,7 @@ BOOT:
 # * _connect( [server [, user [, passwd [, db [, client_flag]]]]] )
 # ******************************************************************************/
 
-UV
+U32
 _connect( server = NULL, user = NULL, passwd = NULL, db = NULL, client_flag = 0 )
 const char *server
 const char *user
@@ -74,7 +74,7 @@ CODE:
 	res = mysql_real_connect( mysql, host, user, passwd, db, port, socket, cf );
 	if( res ) {
 		con = my_mysql_con_add( &MY_CXT, mysql, client_flag );
-		RETVAL = (long) con;
+		RETVAL = (U32) con;
 	}
 	else {
 		my_strcpy( MY_CXT.lasterror, mysql_error( mysql ) );
@@ -93,9 +93,9 @@ CLEANUP:
 # * reconnect( [linkid] )
 # ******************************************************************************/
 
-UV
+int
 reconnect( linkid = 0 )
-UV linkid
+	U32 linkid;
 PREINIT:
 	dMY_CXT;
 	MY_CON *con;
@@ -120,7 +120,7 @@ OUTPUT:
 
 int
 close( linkid = 0 )
-	UV linkid;
+	U32 linkid;
 PREINIT:
 	dMY_CXT;
 CODE:
@@ -148,12 +148,12 @@ OUTPUT:
 # * query( [linkid, ] query )
 # ******************************************************************************/
 
-UV
+U32
 query( ... )
 PREINIT:
 	dMY_CXT;
 	const char *sql;
-	UV linkid = 0;
+	U32 linkid = 0;
 	MY_CON *con = NULL;
 	DWORD sqllen;
 	long ret, try_count = 0, itemp = 0;
@@ -161,7 +161,7 @@ PREINIT:
 CODE:
 	switch( items ) {
 	case 2:
-		linkid = (UV) SvUV( ST( itemp ) );
+		linkid = (U32) SvUV( ST( itemp ) );
 		itemp ++;
 	case 1:
 		sql = (const char *) SvPV_nolen( ST( itemp ) );
@@ -184,7 +184,7 @@ retry:
 	if( result ) {
 		MY_RES *res = my_mysql_res_add( con, result );
 		res->numrows = mysql_num_rows( result );
-		RETVAL = (UV) res;
+		RETVAL = (U32) res;
 	}
 	else {
 		if( mysql_field_count( con->conid ) == 0 )
@@ -204,12 +204,12 @@ OUTPUT:
 # * prepare( [linkid, ] query )
 # ******************************************************************************/
 
-UV
+U32
 prepare( ... )
 PREINIT:
 	dMY_CXT;
 	MY_CON *con;
-	UV linkid = 0;
+	U32 linkid = 0;
 	const char *sql;
 	int try_count = 0, itemp = 0;
 	MY_STMT *stmt;
@@ -219,7 +219,7 @@ PREINIT:
 CODE:
 	switch( items ) {
 	case 2:
-		linkid = (UV) SvUV( ST( itemp ) );
+		linkid = (U32) SvUV( ST( itemp ) );
 		itemp ++;
 	case 1:
 		sql = (const char *) SvPV_nolen( ST( itemp ) );
@@ -275,7 +275,7 @@ retry:
 			New( 1, bind->is_null, 1, my_bool );
 		}
 	}
-	RETVAL = (UV) stmt;
+	RETVAL = (UPTR) stmt;
 goto exit;
 error:
 	RETVAL = 0;
@@ -290,8 +290,8 @@ OUTPUT:
 
 int
 bind_param( stmtid, p_num, val = NULL, type = 0 )
-	UV stmtid;
-	UV p_num;
+	U32 stmtid;
+	U32 p_num;
 	SV *val;
 	char type;
 PREINIT:
@@ -313,7 +313,7 @@ OUTPUT:
 
 UV
 execute( stmtid, ... )
-	UV stmtid;
+	U32 stmtid;
 PREINIT:
 	dMY_CXT;
 	MY_STMT *stmt;
@@ -339,7 +339,7 @@ CODE:
 		if( RETVAL != 0 ) goto error;
 		stmt->numrows = mysql_stmt_affected_rows( stmt->stmt );
 	}
-	RETVAL = (UV) stmt;
+	RETVAL = (UPTR) stmt;
 	goto exit;
 error:
 	RETVAL = 0;
@@ -354,7 +354,7 @@ OUTPUT:
 
 UV
 num_fields( resid )
-	UV resid;
+	U32 resid;
 PREINIT:
 	dMY_CXT;
 CODE:
@@ -377,25 +377,44 @@ OUTPUT:
 # * num_rows( resid )
 # ******************************************************************************/
 
-UV
+void
 num_rows( resid )
-	UV resid;
+	U32 resid;
 PREINIT:
 	dMY_CXT;
+	char tmp[21], *p1;
 CODE:
 	switch( my_mysql_stmt_or_res( &MY_CXT, resid ) ) {
 	case MY_TYPE_RES:
-		RETVAL = (UV) ( (MY_RES *) resid )->numrows;
+#ifdef HAS_UV64
+		ST(0) = sv_2mortal( newSVuv( ( (MY_RES *) resid )->numrows ) );
+#else
+		if( ( (MY_RES *) resid )->numrows <= 0xffffffff ) {
+			ST(0) = sv_2mortal( newSVuv( ( (MY_RES *) resid )->numrows ) );
+		}
+		else {
+			p1 = my_ltoa( tmp, ( (MY_RES *) resid )->numrows, 10 );
+			ST(0) = sv_2mortal( newSVpvn( tmp, p1 - tmp ) );
+		}
+#endif
 		break;
 	case MY_TYPE_STMT:
-		RETVAL = (UV) ( (MY_STMT *) resid )->numrows;
+#ifdef HAS_UV64
+		ST(0) = sv_2mortal( newSVuv( ( (MY_STMT *) resid )->numrows ) );
+#else
+		if( ( (MY_STMT *) resid )->numrows <= 0xffffffff ) {
+			ST(0) = sv_2mortal( newSVuv( ( (MY_STMT *) resid )->numrows ) );
+		}
+		else {
+			p1 = my_ltoa( tmp, ( (MY_STMT *) resid )->numrows, 10 );
+			ST(0) = sv_2mortal( newSVpvn( tmp, p1 - tmp ) );
+		}
+#endif
 		break;
 	default:
-		RETVAL = 0;
+		ST(0) = &PL_sv_undef;
 		break;
 	}
-OUTPUT:
-	RETVAL
 
 
 #/******************************************************************************
@@ -404,7 +423,7 @@ OUTPUT:
 
 void
 fetch_names( resid )
-	UV resid;
+	U32 resid;
 PREINIT:
 	dMY_CXT;
 	MYSQL_RES *res = NULL;
@@ -438,7 +457,7 @@ exit:
 
 void
 fetch_field( resid, offset = -1 )
-	UV resid;
+	U32 resid;
 	long offset;
 PREINIT:
 	dMY_CXT;
@@ -497,10 +516,10 @@ exit:
 # * field_seek( resid [, offset] )
 # ******************************************************************************/
 
-UV
+U32
 field_seek( resid, offset = 0 )
-	UV resid;
-	long offset;
+	U32 resid;
+	U32 offset;
 PREINIT:
 	dMY_CXT;
 CODE:
@@ -523,9 +542,9 @@ OUTPUT:
 # * field_tell( resid )
 # ******************************************************************************/
 
-UV
+U32
 field_tell( resid )
-	UV resid;
+	U32 resid;
 PREINIT:
 	dMY_CXT;
 CODE:
@@ -550,12 +569,12 @@ OUTPUT:
 
 void
 fetch_row( resid )
-	UV resid;
+	U32 resid;
 PREINIT:
 	dMY_CXT;
 	MY_RES *res;
 	MYSQL_ROW row;
-	unsigned long *lengths;
+	DWORD *lengths;
 	MY_STMT *stmt;
 	MYSQL_BIND *result;
 	DWORD num_fields, i;
@@ -625,7 +644,7 @@ error:
 
 void
 fetch_col( resid )
-	UV resid;
+	U32 resid;
 PREINIT:
 	dMY_CXT;
 	MY_RES *res;
@@ -693,7 +712,7 @@ PPCODE:
 
 void
 fetch_hash( resid )
-	UV resid;
+	U32 resid;
 PREINIT:
 	dMY_CXT;
 	MY_RES *res;
@@ -701,7 +720,7 @@ PREINIT:
 	MYSQL_FIELD *fields;
 	MY_STMT *stmt;
 	MYSQL_BIND *result;
-	unsigned long *lengths;
+	DWORD *lengths;
 	DWORD num_fields, i;
 PPCODE:
 	switch( my_mysql_stmt_or_res( &MY_CXT, resid ) ) {
@@ -777,10 +796,10 @@ error:
 
 void
 fetch_lengths( resid )
-	UV resid;
+	U32 resid;
 PREINIT:
 	dMY_CXT;
-	unsigned long *lengths;
+	DWORD *lengths;
 	DWORD num_fields, i;
 	MY_STMT *stmt;
 PPCODE:
@@ -810,7 +829,7 @@ PPCODE:
 
 int
 row_seek( resid, offset = 0 )
-	UV resid;
+	U32 resid;
 	UV offset;
 PREINIT:
 	dMY_CXT;
@@ -820,16 +839,16 @@ CODE:
 	switch( my_mysql_stmt_or_res( &MY_CXT, resid ) ) {
 	case MY_TYPE_RES:
 		res = (MY_RES *) resid;
-		if( offset >= (DWORD) res->numrows )
-			offset = (DWORD) res->numrows - 1;
+		if( offset >= (UV) res->numrows )
+			offset = (UV) res->numrows - 1;
 		mysql_data_seek( res->res, offset );
 		res->rowpos = offset;
 		RETVAL = 1;
 		break;
 	case MY_TYPE_STMT:
 		stmt = (MY_STMT *) resid;
-		if( offset >= (DWORD) stmt->numrows )
-			offset = (DWORD) stmt->numrows - 1;
+		if( offset >= (UV) stmt->numrows )
+			offset = (UV) stmt->numrows - 1;
 		mysql_stmt_data_seek( stmt->stmt, offset );
 		stmt->rowpos = offset;
 		RETVAL = 1;
@@ -847,7 +866,7 @@ OUTPUT:
 
 UV
 row_tell( resid )
-	UV resid;
+	U32 resid;
 PREINIT:
 	dMY_CXT;
 CODE:
@@ -871,7 +890,7 @@ OUTPUT:
 
 int
 free_result( resid )
-	UV resid;
+	U32 resid;
 PREINIT:
 	dMY_CXT;
 CODE:
@@ -895,51 +914,103 @@ OUTPUT:
 # * insert_id( [linkid [, field [, table [, schema]]]] )
 # ******************************************************************************/
 
-UV
+void
 insert_id( linkid = 0, field = NULL, table = NULL, schema = NULL )
-	UV linkid;
+	U32 linkid;
 	const char *field;
 	const char *table;
 	const char *schema;
 PREINIT:
 	dMY_CXT;
+	UXLONG rv;
+	char tmp[21], *p1;
 CODE:
 	switch( my_mysql_stmt_or_con( &MY_CXT, &linkid ) ) {
 	case MY_TYPE_CON:
-		RETVAL = (UV) mysql_insert_id( ( (MY_CON *) linkid )->conid );
+#ifdef HAS_UV64
+		ST(0) = sv_2mortal(
+			newSVuv( mysql_insert_id( ( (MY_CON *) linkid )->conid ) )
+		);
+#else
+		rv = mysql_insert_id( ( (MY_CON *) linkid )->conid );
+		if( rv <= 0xffffffff ) {
+			ST(0) = sv_2mortal( newSVuv( rv ) );
+		}
+		else {
+			p1 = my_ltoa( tmp, rv, 10 );
+			ST(0) = sv_2mortal( newSVpvn( tmp, p1 - tmp ) );
+		}
+#endif
 		break;
 	case MY_TYPE_STMT:
-		RETVAL = (UV) mysql_stmt_insert_id( ( (MY_STMT *) linkid )->stmt );
+#ifdef HAS_UV64
+		ST(0) = sv_2mortal(
+			newSVuv( mysql_stmt_insert_id( ( (MY_STMT *) linkid )->stmt ) )
+		);
+#else
+		rv = mysql_stmt_insert_id( ( (MY_STMT *) linkid )->stmt );
+		if( rv <= 0xffffffff ) {
+			ST(0) = sv_2mortal( newSVuv( rv ) );
+		}
+		else {
+			p1 = my_ltoa( tmp, rv, 10 );
+			ST(0) = sv_2mortal( newSVpvn( tmp, p1 - tmp ) );
+		}
+#endif
 		break;
 	default:
-		RETVAL = 0;
+		ST(0) = &PL_sv_undef;
 	}
-OUTPUT:
-	RETVAL
 
 
 #/******************************************************************************
 # * affected_rows( [linkid] )
 # ******************************************************************************/
 
-UV
+void
 affected_rows( linkid = 0 )
-	UV linkid;
+	U32 linkid;
 PREINIT:
 	dMY_CXT;
+	UXLONG ret;
+	char tmp[21], *p1;
 CODE:
 	switch( my_mysql_stmt_or_con( &MY_CXT, &linkid ) ) {
 	case MY_TYPE_CON:
-		RETVAL = (UV) mysql_affected_rows( ( (MY_CON *) linkid )->conid );
+#ifdef HAS_UV64
+		ST(0) = sv_2mortal(
+			newSVuv( mysql_affected_rows( ( (MY_CON *) linkid )->conid ) )
+		);
+#else
+		ret = mysql_affected_rows( ( (MY_CON *) linkid )->conid );
+		if( ret <= 0xffffffff ) {
+			ST(0) = sv_2mortal( newSVuv( ret ) );
+		}
+		else {
+			p1 = my_ltoa( tmp, ret, 10 );
+			ST(0) = sv_2mortal( newSVpvn( tmp, p1 - tmp ) );
+		}
+#endif
 		break;
 	case MY_TYPE_STMT:
-		RETVAL = (UV) mysql_stmt_affected_rows( ( (MY_STMT *) linkid )->stmt );
+#ifdef HAS_UV64
+		ST(0) = sv_2mortal(
+			newSVuv( mysql_stmt_affected_rows( ( (MY_STMT *) linkid )->stmt ) )
+		);
+#else
+		ret = mysql_stmt_affected_rows( ( (MY_STMT *) linkid )->stmt );
+		if( ret <= 0xffffffff ) {
+			ST(0) = sv_2mortal( newSVuv( ret ) );
+		}
+		else {
+			p1 = my_ltoa( tmp, ret, 10 );
+			ST(0) = sv_2mortal( newSVpvn( tmp, p1 - tmp ) );
+		}
+#endif
 		break;
 	default:
-		RETVAL = 0;
+		ST(0) = &PL_sv_undef;
 	}
-OUTPUT:
-	RETVAL
 
 
 #/******************************************************************************
@@ -1037,7 +1108,7 @@ PREINIT:
 	char *tmp = 0;
 	DWORD len;
 	const char *val;
-	UV linkid;
+	U32 linkid;
 CODE:
     if( items < 1 || items > 2 )
 		Perl_croak( aTHX_ "Usage: " __PACKAGE__ "::escape(linkid = 0, val)" );
@@ -1046,15 +1117,14 @@ CODE:
 	    val = (const char *) SvPV_nolen( ST(0) );
 	}
 	else {
-		linkid = (UV) SvUV( ST(0) );
+		linkid = (U32) SvUV( ST(0) );
 	    val = (const char *) SvPV_nolen( ST(1) );
 	}
 	if( ! ( linkid = my_verify_linkid( &MY_CXT, linkid ) ) ) goto error;
 	len = strlen( val );
 	New( 1, tmp, len * 2 + 1, char );
 	len = mysql_real_escape_string( ( (MY_CON *) linkid )->conid, tmp, val, len );
-	ST(0) = newSVpvn( tmp, len );
-	sv_2mortal( ST(0) );
+	ST(0) = sv_2mortal( newSVpvn( tmp, len ) );
 error:
 CLEANUP:
 	Safefree( tmp );
@@ -1069,7 +1139,7 @@ set_charset( ... )
 PREINIT:
 	dMY_CXT;
 	const char *charset;
-	UV linkid = 0;
+	U32 linkid = 0;
 	MY_CON *con;
 	unsigned long version, sqllen;
 	STRLEN cslen;
@@ -1079,7 +1149,7 @@ CODE:
     if( items < 1 || items > 2 )
 		Perl_croak( aTHX_ "Usage: " __PACKAGE__ "::set_charset(linkid = 0, charset)" );
 	if( items > 1 ) {
-		linkid = (UV) SvUV( ST( itemp ) );
+		linkid = (U32) SvUV( ST( itemp ) );
 		itemp ++;
 	}
     charset = (const char *) SvPVx( ST( itemp ), cslen );
@@ -1120,7 +1190,7 @@ OUTPUT:
 
 const char *
 get_charset( linkid = 0 )
-	UV linkid;
+	U32 linkid;
 PREINIT:
 	dMY_CXT;
 CODE:
@@ -1138,7 +1208,7 @@ OUTPUT:
 
 int
 auto_commit( linkid = 0, mode = 1 )
-	UV linkid;
+	U32 linkid;
 	int mode;
 PREINIT:
 	dMY_CXT;
@@ -1175,7 +1245,7 @@ OUTPUT:
 
 int
 begin_work( linkid = 0 )
-	UV linkid;
+	U32 linkid;
 PREINIT:
 	dMY_CXT;
 	MY_CON *con;
@@ -1202,7 +1272,7 @@ OUTPUT:
 
 int
 commit( linkid = 0 )
-	UV linkid;
+	U32 linkid;
 PREINIT:
 	dMY_CXT;
 	MY_CON *con;
@@ -1233,7 +1303,7 @@ OUTPUT:
 
 int
 rollback( linkid = 0 )
-	UV linkid;
+	U32 linkid;
 PREINIT:
 	dMY_CXT;
 	MY_CON *con;
@@ -1264,7 +1334,7 @@ OUTPUT:
 
 void
 show_catalogs( linkid = 0, wild = NULL )
-	UV linkid;
+	U32 linkid;
 	const char *wild;
 PREINIT:
 	dMY_CXT;
@@ -1293,7 +1363,7 @@ error:
 
 void
 show_tables( linkid = 0, schema = NULL, db = NULL, wild = NULL )
-	UV linkid;
+	U32 linkid;
 	const char *db;
 	const char *schema;
 	const char *wild;
@@ -1352,7 +1422,7 @@ void
 show_fields( ... )
 PREINIT:
 	dMY_CXT;
-	UV linkid = 0;
+	U32 linkid = 0;
 	const char *table = NULL;
 	const char *schema = NULL;
 	const char *db = NULL;
@@ -1428,7 +1498,7 @@ void
 show_index( ... )
 PREINIT:
 	dMY_CXT;
-	UV linkid = 0;
+	U32 linkid = 0;
 	const char *table = NULL;
 	const char *schema = NULL;
 	const char *db = NULL;
@@ -1565,7 +1635,7 @@ CLEANUP:
 
 UV
 errno( linkid = 0 )
-UV linkid
+	U32 linkid;
 PREINIT:
 	dMY_CXT;
 CODE:
@@ -1583,7 +1653,7 @@ OUTPUT:
 
 void
 error( linkid = 0 )
-UV linkid
+	U32 linkid;
 PREINIT:
 	dMY_CXT;
 	MY_CON *con;

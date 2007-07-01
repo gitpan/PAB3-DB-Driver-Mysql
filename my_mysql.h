@@ -7,7 +7,7 @@
 
 //#include "ppport.h"
 
-#ifdef _WIN32
+#ifdef __WIN__
 #include <windows.h>
 #endif
 
@@ -30,15 +30,27 @@ static const my_bool MYBOOL_FALSE	= 0;
 #undef DWORD
 #define DWORD unsigned long
 
-#ifndef my_longlong
+#undef UPTR
+#define UPTR unsigned long
+
+#undef HAS_UV64
+#if UVSIZE == 8
+#	define HAS_UV64
+#endif
+
+#undef XLONG
+#undef UXLONG
 #if defined __unix__
-#define my_longlong long long
-#elif defined _WIN32
-#define my_longlong __int64
+#	define XLONG long long
+#	define UXLONG unsigned long long
+#elif defined __WIN__
+#	define XLONG __int64
+#	define UXLONG unsigned __int64
 #else
-#define my_longlong long
+#	define XLONG long
+#	define UXLONG unsigned long
 #endif
-#endif
+
 
 typedef struct st_my_con {
 	struct st_my_con	*prev, *next;
@@ -72,16 +84,16 @@ typedef struct st_my_stmt {
 	MYSQL_RES			*meta;
 	MY_CON				*con;
 	DWORD				exec_count;
-	my_longlong			rowpos;
-	my_longlong			numrows;
+	XLONG				rowpos;
+	XLONG				numrows;
 } MY_STMT;
 
 typedef struct st_my_res {
 	struct st_my_res	*prev, *next;
 	MYSQL_RES			*res;
 	MY_CON				*con;
-	my_longlong			rowpos;
-	my_longlong			numrows;
+	XLONG				rowpos;
+	XLONG				numrows;
 } MY_RES;
 
 #define MY_CXT_KEY __PACKAGE__ "::_guts" XS_VERSION
@@ -112,8 +124,8 @@ START_MY_CXT
 
 char *my_strcpyn( char *dst, const char *src, unsigned long len );
 char *my_strcpy( char *dst, const char *src );
-//char *my_itoa( int value, char* str, int radix );
-//char *str_replace( const char *str, const char *search, const char *replace );
+char *my_itoa( char *str, long value, int radix );
+char *my_ltoa( char *str, XLONG value, int radix );
 
 //DWORD my_crc32( const char *str, DWORD len );
 DWORD get_current_thread_id();
@@ -123,9 +135,9 @@ void my_set_error( my_cxt_t *cxt, const char *tpl, ... );
 	_my_verify_linkid( (cxt), (linkid), 1 )
 #define my_verify_linkid_noerror(cxt,linkid) \
 	_my_verify_linkid( (cxt), (linkid), 0 )
-UV _my_verify_linkid( my_cxt_t *cxt, UV linkid, int error );
+UPTR _my_verify_linkid( my_cxt_t *cxt, UPTR linkid, int error );
 
-int my_mysql_get_type( my_cxt_t *cxt, UV *ptr );
+int my_mysql_get_type( my_cxt_t *cxt, UPTR *ptr );
 
 void my_mysql_cleanup( my_cxt_t *cxt );
 void my_mysql_cleanup_connections( my_cxt_t *cxt );
@@ -146,8 +158,8 @@ MY_STMT *my_mysql_stmt_init( MY_CON *con, const char *query, DWORD length );
 void my_mysql_stmt_free( MY_STMT *stmt );
 int my_mysql_stmt_exists( my_cxt_t *cxt, MY_STMT *stmt );
 void my_mysql_stmt_rem( MY_STMT *stmt );
-int my_mysql_stmt_or_res( my_cxt_t *cxt, UV ptr );
-int my_mysql_stmt_or_con( my_cxt_t *cxt, UV *ptr );
+int my_mysql_stmt_or_res( my_cxt_t *cxt, UPTR ptr );
+int my_mysql_stmt_or_con( my_cxt_t *cxt, UPTR *ptr );
 
 int my_mysql_bind_param( MY_STMT *stmt, DWORD p_num, SV *val, char type );
 void my_mysql_bind_free( MYSQL_BIND *bind );
