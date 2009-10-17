@@ -1,8 +1,8 @@
 use 5.008;
-use ExtUtils::MakeMaker;
+use ExtUtils::MakeMaker ();
 use Config;
 
-$Verbose = 0;
+$ExtUtils::MakeMaker::Verbose = 0;
 
 %os_supported = ( 'linux' => 1, 'MSWin32' => 1, 'darwin' => 1 );
 
@@ -55,7 +55,7 @@ EOF1
 
 if( ! $_useit ) {
 	&donotuse();
-	WriteMakefile( %_MAKEOPTS );
+	ExtUtils::MakeMaker::WriteMakefile( %_MAKEOPTS );
 	$PAB ? return 1 : exit 0;
 }
 
@@ -87,6 +87,21 @@ if( $^O eq 'MSWin32' ) {
 			}
 		}
 	}
+    my $path = 'c:\\program files\\mysql\\';
+	if( ! @_INC_PATH_MY && -d $path ) {
+	    my( $dir, @items, $cp );
+	    opendir( $dir, $path );
+	    @items = grep{ ! /^\./ && -d $path . $_ } readdir( $dir );
+	    closedir( $dir );
+	    foreach( @items ) {
+	        $cp = $path . $_ . '\\';
+	        if( -f $cp . 'include/mysql.h' ) {
+				push( @_INC_PATH_MY, $cp . 'include' );
+				push( @_LIB_PATH_MY, $cp . 'bin', $cp . 'lib', $cp . 'lib\\opt' );
+	        }
+	    }
+	}
+	$_MAKEOPTS{'DEFINE'} .= ' -D_CRT_SECURE_NO_DEPRECATE -D_CRT_SECURE_NO_WARNINGS';
 }
 
 if( $PAB_OPT{'with_mysql'} ) {
@@ -95,6 +110,7 @@ if( $PAB_OPT{'with_mysql'} ) {
 		@_LIB_PATH_MY = ( $PAB_OPT{'with_mysql'} . '/lib' );
 		if( $^O eq 'MSWin32' ) {
 			unshift @_LIB_PATH_MY, $PAB_OPT{'with_mysql'} . '/lib/opt';
+			unshift @_LIB_PATH_MY, $PAB_OPT{'with_mysql'} . '/bin';
 		}
 		$mc = 0;
 	}
@@ -120,9 +136,9 @@ foreach( @ARGV ) {
 	if( /--mysql_config=(.+)/ ) {
 		$mc = $1;
 	}
-	elsif( /--mysql_base=(.+)/ ) {
+	elsif( /--mysql_dir=(.+)/ ) {
 		@_INC_PATH_MY = ( $1 . '/include' );
-		@_LIB_PATH_MY = ( $1 . '/lib', $1 . '/lib/opt' );
+		@_LIB_PATH_MY = ( $1 . '/bin', $1 . '/lib', $1 . '/lib/opt' );
 		$lb = $ic = 1;
 	}
 	elsif( /--libs=(.+)/ ) {
@@ -215,7 +231,7 @@ EOF1
 else {
 	rename '_t', 't' if -d '_t';
 }
-WriteMakefile( %_MAKEOPTS );
+ExtUtils::MakeMaker::WriteMakefile( %_MAKEOPTS );
 
 1;
 
@@ -224,7 +240,7 @@ sub print_usage {
 Usage: perl $0 [options]
 Options:
     --help                 print this message
-    --mysql_base=DIR       DIR is the MySQL base directory
+    --mysql_dir=DIR        DIR is the path to the MySQL base directory
     --mysql_config=FILE    FILE is the pathname to mysql_config
     --libs=LIBS            Use LIBS for running the linker; defaults to the value of "mysql_config --libs" or a guessed value
     --include=INCLUDE      Use INCLUDE for running the comiler; defaults to the value of "mysql_config --include" or a guessed value
@@ -237,7 +253,7 @@ sub donotuse {
 	$_MAKEOPTS{'C'} = [];
 	$_MAKEOPTS{'OBJECT'} = '';
 	$_MAKEOPTS{'PM'} = {};
-    $_MAKEOPTS{'PL_FILES'} => {};
+    $_MAKEOPTS{'PL_FILES'} = {};
 	rename 't', '_t' if -d 't';
 }
 
@@ -282,4 +298,25 @@ sub file_copy {
 	}
 	close( $dfh );
 	close( $sfh );
+}
+
+package MY;
+
+sub cflags {
+    my $inherited = shift->SUPER::cflags( @_ );
+    if( $^O eq 'MSWin32' ) {
+	    $inherited =~ s/-O1/-O2/sg;
+    	# set static linking to crt
+	    $inherited =~ s/-MD/-MT/sg;
+	}
+    $inherited;
+}
+
+sub const_loadlibs {
+    my $inherited = shift->SUPER::const_loadlibs( @_ );
+    if( $^O eq 'MSWin32' ) {
+    	# set static linking to crt
+	    $inherited =~ s/msvcrt\.lib/libcmt\.lib/sgi;
+	}
+    $inherited;
 }

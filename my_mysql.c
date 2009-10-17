@@ -215,7 +215,7 @@ int my_mysql_res_exists( my_cxt_t *cxt, MY_RES *res ) {
 	return 0;
 }
 
-MYSQL *my_mysql_reconnect( MY_CON *con ) {
+int my_mysql_reconnect( MY_CON *con ) {
 	MYSQL *res;
 	my_mysql_con_cleanup( con );
 	mysql_close( con->conid );
@@ -234,16 +234,16 @@ MYSQL *my_mysql_reconnect( MY_CON *con ) {
 		mysql_real_query( con->conid, sql, 12 + con->charset_length );
 		Safefree( sql );
 	}
-	return res;
+	return res != NULL;
 }
 
-MY_STMT *my_mysql_stmt_init( MY_CON *con, const char *query, DWORD length ) {
+MY_STMT *my_mysql_stmt_init( MY_CON *con, const char *query, size_t length ) {
 	MY_STMT *stmt;
 	int hr;
 	Newz( 1, stmt, 1, MY_STMT );
 	if( stmt == NULL ) return NULL;
 	stmt->stmt = mysql_stmt_init( con->conid );
-	hr = mysql_stmt_prepare( stmt->stmt, query, length ); 
+	hr = mysql_stmt_prepare( stmt->stmt, query, (DWORD) length ); 
 	if( hr != 0 ) {
 		Safefree( stmt );
 		return NULL;
@@ -367,11 +367,11 @@ int my_mysql_bind_param( MY_STMT *stmt, DWORD p_num, SV *val, char type ) {
 		Renew( bind->buffer, 1, int );
 		if( SvIOK_UV( val ) ) {
 			bind->is_unsigned = 1;
-			*((int *) bind->buffer) = SvUV( val );
+			*((int *) bind->buffer) = (int) SvUV( val );
 		}
 		else {
 			bind->is_unsigned = 0;
-			*((int *) bind->buffer) = SvIV( val );
+			*((int *) bind->buffer) = (int) SvIV( val );
 		}
 		return 1;
 	case 'd':
@@ -381,12 +381,12 @@ int my_mysql_bind_param( MY_STMT *stmt, DWORD p_num, SV *val, char type ) {
 		return 1;
 	case 's':
 		bind->buffer_type = MYSQL_TYPE_STRING;
-		svlen = SvLEN( val ) + 1;
-		Renew( bind->buffer, svlen, char );
+		svlen = SvLEN( val );
+		Renew( bind->buffer, svlen + 1, char );
 		p1 = SvPV( val, svlen );
-		Copy( p1, bind->buffer, svlen, char );
+		Copy( p1, bind->buffer, svlen + 1, char );
 		Renew( bind->length, 1, unsigned long );
-		*bind->length = svlen;
+		*bind->length = (unsigned long) svlen;
 		return 1;
 	case 'b':
 		bind->buffer_type = MYSQL_TYPE_BLOB;
@@ -395,7 +395,7 @@ int my_mysql_bind_param( MY_STMT *stmt, DWORD p_num, SV *val, char type ) {
 		p1 = SvPVbyte( val, svlen );
 		Copy( p1, bind->buffer, svlen, char );
 		Renew( bind->length, 1, unsigned long );
-		*bind->length = svlen;
+		*bind->length = (unsigned long) svlen;
 		return 1;
 	}
 	// autodetect type
@@ -404,11 +404,11 @@ int my_mysql_bind_param( MY_STMT *stmt, DWORD p_num, SV *val, char type ) {
 		Renew( bind->buffer, 1, int );
 		if( SvIOK_UV( val ) ) {
 			bind->is_unsigned = 1;
-			*((int *) bind->buffer) = SvUV( val );
+			*((int *) bind->buffer) = (int) SvUV( val );
 		}
 		else {
 			bind->is_unsigned = 0;
-			*((int *) bind->buffer) = SvIV( val );
+			*((int *) bind->buffer) = (int) SvIV( val );
 		}
 	}
 	else if( SvNOK( val ) ) {
@@ -417,13 +417,13 @@ int my_mysql_bind_param( MY_STMT *stmt, DWORD p_num, SV *val, char type ) {
 		*((double *) bind->buffer) = SvNV( val );
 	}
 	else {
-		svlen = SvLEN( val ) + 1;
+		svlen = SvLEN( val );
 		bind->buffer_type = MYSQL_TYPE_STRING;
 		Renew( bind->buffer, svlen, char );
 		p1 = SvPV( val, svlen );
 		Copy( p1, bind->buffer, svlen, char );
 		Renew( bind->length, 1, unsigned long );
-		*bind->length = svlen;
+		*bind->length = (unsigned long) svlen;
 	}
 	return 1;
 }
@@ -451,8 +451,8 @@ int my_mysql_handle_return( MY_CON *con, long ret ) {
 	case CR_SERVER_GONE_ERROR:
 	case CR_SERVER_LOST:
 		if( ( con->client_flag & CLIENT_RECONNECT ) != 0 ) {
-			ret = (long) my_mysql_reconnect( con );
-			if( ret == 0 ) return mysql_errno( con->conid );
+			ret = my_mysql_reconnect( con );
+			if( ! ret ) return mysql_errno( con->conid );
 		}
 		return 0;
 	}
@@ -510,8 +510,8 @@ DWORD my_crc32( const char *str, DWORD len ) {
 }
 */
 
-char *my_strcpyn( char *dst, const char *src, unsigned long len ) {
-	char ch;
+char *my_strncpy( char *dst, const char *src, size_t len ) {
+	register char ch;
 	for( ; len > 0; len -- ) {
 		if( ( ch = *src ++ ) == '\0' ) {
 			*dst = '\0';
@@ -524,115 +524,77 @@ char *my_strcpyn( char *dst, const char *src, unsigned long len ) {
 }
 
 char *my_strcpy( char *dst, const char *src ) {
-	char ch;
+	register char ch;
 	while( 1 ) {
-		if( ( ch = *src ++ ) == '\0' ) {
-			*dst = '\0';
-			return dst;
-		}
+		if( (ch = *src ++) == '\0' )
+			break;
 		*dst ++ = ch;
 	}
 	*dst = '\0';
 	return dst;
 }
 
-char *my_strrev( char *str, size_t len ) {
-	char *p1, *p2;
-	if( ! str || ! *str ) return str;
-	for( p1 = str, p2 = str + len - 1; p2 > p1; ++ p1, -- p2 ) {
-		*p1 ^= *p2;
-		*p2 ^= *p1;
-		*p1 ^= *p2;
+const char HEX_FROM_CHAR[] = {
+	'0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+	'A', 'B', 'C', 'D', 'E', 'F'
+};
+
+char *my_itoa( register char *str, long value, int radix ) {
+	int rem;
+	char tmp[21], *ret = tmp, neg;
+	if( value >= 0 )
+		neg = 0;
+	else {
+		value = -value;
+		neg = 1;
 	}
+	switch( radix ) {
+	case 16:
+		do {
+			rem = (int) (value % 16);
+			value /= 16;
+			*ret ++ = HEX_FROM_CHAR[rem];
+		} while( value > 0 );
+		break;
+	default:
+		do {
+			*ret ++ = (char) ((value % radix) + '0');
+			value /= radix;
+		} while( value > 0 );
+		if( neg )
+			*ret ++ = '-';
+	}
+	for( ret --; ret >= tmp; *str ++ = *ret -- );
+	*str = '\0';
 	return str;
 }
 
-char *my_itoa( char *str, long value, int radix ) {
+char *my_ltoa( register char *str, XLONG value, int radix ) {
 	int rem;
-	char *ret = str;
+	char tmp[21], *ret = tmp, neg;
+	if( value >= 0 )
+		neg = 0;
+	else {
+		value = -value;
+		neg = 1;
+	}
 	switch( radix ) {
 	case 16:
 		do {
-			rem = value % 16;
+			rem = (int) (value % 16);
 			value /= 16;
-			switch( rem ) {
-			case 10:
-				*ret ++ = 'A';
-				break;
-			case 11:
-				*ret ++ = 'B';
-				break;
-			case 12:
-				*ret ++ = 'C';
-				break;
-			case 13:
-				*ret ++ = 'D';
-				break;
-			case 14:
-				*ret ++ = 'E';
-				break;
-			case 15:
-				*ret ++ = 'F';
-				break;
-			default:
-				*ret ++ = (char) ( rem + 0x30 );
-				break;
-			}
-		} while( value != 0 );
+			*ret ++ = HEX_FROM_CHAR[rem];
+		} while( value > 0 );
 		break;
 	default:
 		do {
-			rem = value % radix;
+			*ret ++ = (char) ((value % radix) + '0');
 			value /= radix;
-			*ret ++ = (char) ( rem + 0x30 );
-		} while( value != 0 );
+		} while( value > 0 );
+		if( neg )
+			*ret ++ = '-';
 	}
-	*ret = '\0' ;
-	my_strrev( str, ret - str );
-	return ret;
-}
-
-char *my_ltoa( char *str, XLONG value, int radix ) {
-	int rem;
-	char *ret = str;
-	switch( radix ) {
-	case 16:
-		do {
-			rem = value % 16;
-			value /= 16;
-			switch( rem ) {
-			case 10:
-				*ret ++ = 'A';
-				break;
-			case 11:
-				*ret ++ = 'B';
-				break;
-			case 12:
-				*ret ++ = 'C';
-				break;
-			case 13:
-				*ret ++ = 'D';
-				break;
-			case 14:
-				*ret ++ = 'E';
-				break;
-			case 15:
-				*ret ++ = 'F';
-				break;
-			default:
-				*ret ++ = (char) ( rem + 0x30 );
-				break;
-			}
-		} while( value != 0 );
-		break;
-	default:
-		do {
-			rem = value % radix;
-			value /= radix;
-			*ret ++ = (char) ( rem + 0x30 );
-		} while( value != 0 );
-	}
-	*ret = '\0' ;
-	my_strrev( str, ret - str );
-	return ret;
+	for( ret --; ret >= tmp; *str ++ = *ret -- );
+	*str = '\0';
+	return str;
 }

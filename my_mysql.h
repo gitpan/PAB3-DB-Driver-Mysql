@@ -7,10 +7,6 @@
 
 //#include "ppport.h"
 
-#ifdef __WIN__
-#include <windows.h>
-#endif
-
 #include <mysql.h>
 
 #define __PACKAGE__ "PAB3::DB::Driver::Mysql"
@@ -43,7 +39,7 @@ static const my_bool MYBOOL_FALSE	= 0;
 #if defined __unix__
 #	define XLONG long long
 #	define UXLONG unsigned long long
-#elif defined __WIN__
+#elif defined _WIN32
 #	define XLONG __int64
 #	define UXLONG unsigned __int64
 #else
@@ -122,7 +118,7 @@ START_MY_CXT
 #define STR_CREATEANDCOPY( src, dst ) \
 	STR_CREATEANDCOPYN( (src), (dst), (src) ? strlen( (src) ) : 0 )
 
-char *my_strcpyn( char *dst, const char *src, unsigned long len );
+char *my_strncpy( char *dst, const char *src, size_t len );
 char *my_strcpy( char *dst, const char *src );
 char *my_itoa( char *str, long value, int radix );
 char *my_ltoa( char *str, XLONG value, int radix );
@@ -141,7 +137,7 @@ int my_mysql_get_type( my_cxt_t *cxt, UPTR *ptr );
 
 void my_mysql_cleanup( my_cxt_t *cxt );
 void my_mysql_cleanup_connections( my_cxt_t *cxt );
-MYSQL *my_mysql_reconnect( MY_CON *con );
+int my_mysql_reconnect( MY_CON *con );
 
 MY_CON *my_mysql_con_add( my_cxt_t *cxt, MYSQL *mysql, DWORD client_flag );
 void my_mysql_con_rem( my_cxt_t *cxt, MY_CON *con );
@@ -154,7 +150,7 @@ MY_RES *my_mysql_res_add( MY_CON *con, MYSQL_RES *res );
 void my_mysql_res_rem( MY_RES *res );
 int my_mysql_res_exists( my_cxt_t *cxt, MY_RES *res );
 
-MY_STMT *my_mysql_stmt_init( MY_CON *con, const char *query, DWORD length );
+MY_STMT *my_mysql_stmt_init( MY_CON *con, const char *query, size_t length );
 void my_mysql_stmt_free( MY_STMT *stmt );
 int my_mysql_stmt_exists( my_cxt_t *cxt, MY_STMT *stmt );
 void my_mysql_stmt_rem( MY_STMT *stmt );

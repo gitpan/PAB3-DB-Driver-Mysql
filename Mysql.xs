@@ -20,9 +20,23 @@ BOOT:
 }
 
 
-#/******************************************************************************
+#/*****************************************************************************
+# * CLONE( ... )
+# *****************************************************************************/
+
+#if defined(USE_ITHREADS) && defined(MY_CXT_KEY)
+
+void
+CLONE( ... )
+CODE:
+	MY_CXT_CLONE;
+
+#endif
+
+
+#/*****************************************************************************
 # * _connect( [server [, user [, passwd [, db [, client_flag]]]]] )
-# ******************************************************************************/
+# *****************************************************************************/
 
 void *
 _connect( server = NULL, user = NULL, passwd = NULL, db = NULL, client_flag = 0 )
@@ -35,7 +49,8 @@ PREINIT:
 	dMY_CXT;
 	MY_CON *con;
 	MYSQL *mysql, *res;
-	DWORD cf, l1;
+	DWORD cf;
+	size_t l1;
 	char *s1, *tmp = NULL;
 	unsigned int port = 0;
 	const char *socket = NULL, *host = NULL;
@@ -77,7 +92,7 @@ CODE:
 		RETVAL = con;
 	}
 	else {
-		my_strcpy( MY_CXT.lasterror, mysql_error( mysql ) );
+		strncpy( MY_CXT.lasterror, mysql_error( mysql ), sizeof( MY_CXT.lasterror ) );
 		MY_CXT.lasterrno = mysql_errno( mysql );
 		//MY_CXT.lastcon = NULL;
 		Safefree( mysql );
@@ -99,12 +114,12 @@ reconnect( linkid = 0 )
 PREINIT:
 	dMY_CXT;
 	MY_CON *con;
-	MYSQL *res;
+	int r;
 CODE:
 	con = (MY_CON *) my_verify_linkid( &MY_CXT, linkid );
 	if( con == NULL ) goto error;
-	res = my_mysql_reconnect( con );
-	if( ! res ) goto error;
+	r = my_mysql_reconnect( con );
+	if( ! r ) goto error;
 	RETVAL = 1;
 	goto exit;
 error:
@@ -155,7 +170,7 @@ PREINIT:
 	const char *sql;
 	void * linkid = 0;
 	MY_CON *con = NULL;
-	DWORD sqllen;
+	size_t sqllen;
 	long ret, try_count = 0, itemp = 0;
 	MYSQL_RES *result;
 CODE:
@@ -173,7 +188,7 @@ CODE:
 	if( con == NULL ) goto error;
 	sqllen = strlen( sql );
 retry:
-	ret = mysql_real_query( con->conid, sql, sqllen );
+	ret = mysql_real_query( con->conid, sql, (DWORD) sqllen );
 	if( ret != 0 ) {
 		if( try_count ++ == 0 )
 			ret = my_mysql_handle_return( con, ret );
@@ -382,7 +397,9 @@ num_rows( resid )
 	void * resid;
 PREINIT:
 	dMY_CXT;
+#ifndef HAS_UV64
 	char tmp[21], *p1;
+#endif
 CODE:
 	switch( my_mysql_stmt_or_res( &MY_CXT, resid ) ) {
 	case MY_TYPE_RES:
@@ -922,8 +939,10 @@ insert_id( linkid = 0, field = NULL, table = NULL, schema = NULL )
 	const char *schema;
 PREINIT:
 	dMY_CXT;
+#ifndef HAS_UV64
 	UXLONG rv;
 	char tmp[21], *p1;
+#endif
 CODE:
 	switch( my_mysql_stmt_or_con( &MY_CXT, &linkid ) ) {
 	case MY_TYPE_CON:
@@ -972,8 +991,10 @@ affected_rows( linkid = 0 )
 	void * linkid;
 PREINIT:
 	dMY_CXT;
+#ifndef HAS_UV64
 	UXLONG ret;
 	char tmp[21], *p1;
+#endif
 CODE:
 	switch( my_mysql_stmt_or_con( &MY_CXT, &linkid ) ) {
 	case MY_TYPE_CON:
@@ -1024,7 +1045,7 @@ PREINIT:
 	char *res = NULL;
 	int l, i, dp;
 CODE:
-	l = strlen( val );
+	l = (int) strlen( val );
 	New( 1, res, l * 2 + 3, char );
 	dp = 1;
 	res[0] = '\'';
@@ -1058,7 +1079,7 @@ PREINIT:
 	const char *str;
 	char *res = NULL;
 	int i;
-	unsigned long j, rlen, rpos;
+	size_t j, rlen, rpos;
 	STRLEN len;
 CODE:
 	rlen = items * 127;
@@ -1106,7 +1127,7 @@ escape( ... )
 PREINIT:
 	dMY_CXT;
 	char *tmp = 0;
-	DWORD len;
+	size_t len;
 	const char *val;
 	void *linkid;
 CODE:
@@ -1123,7 +1144,7 @@ CODE:
 	if( ! ( linkid = my_verify_linkid( &MY_CXT, linkid ) ) ) goto error;
 	len = strlen( val );
 	New( 1, tmp, len * 2 + 1, char );
-	len = mysql_real_escape_string( ( (MY_CON *) linkid )->conid, tmp, val, len );
+	len = mysql_real_escape_string( ( (MY_CON *) linkid )->conid, tmp, val, (DWORD) len );
 	ST(0) = sv_2mortal( newSVpvn( tmp, len ) );
 error:
 CLEANUP:
@@ -1141,8 +1162,8 @@ PREINIT:
 	const char *charset;
 	void *linkid = NULL;
 	MY_CON *con;
-	unsigned long version, sqllen;
-	STRLEN cslen;
+	DWORD version;
+	STRLEN cslen, sqllen;
 	int res, itemp = 0;
 	char *sql, *p1;
 CODE:
@@ -1168,13 +1189,13 @@ CODE:
 	p1 = my_strcpy( sql, "SET NAMES '" );
 	p1 = my_strcpy( p1, charset );
 	p1 = my_strcpy( p1, "'" );
-	res = mysql_real_query( con->conid, sql, sqllen );
+	res = mysql_real_query( con->conid, sql, (DWORD) sqllen );
 	Safefree( sql );
 	if( res ) goto error;
 	Safefree( con->charset );
 	New( 1, con->charset, cslen + 1, char );
 	memcpy( con->charset, charset, cslen + 1 );
-	con->charset_length = cslen;
+	con->charset_length = (DWORD) cslen;
 	RETVAL = 1;
 	goto exit;
 error:
@@ -1385,7 +1406,7 @@ PPCODE:
 			p1 = my_strcpy( p1, " LIKE " );
 			p1 = my_strcpy( p1, wild );
 		}
-		if( mysql_real_query( con->conid, sql, p1 - sql ) == 0 ) {
+		if( mysql_real_query( con->conid, sql, (DWORD) (p1 - sql) ) == 0 ) {
 			res = mysql_store_result( con->conid );
 		}
 		else {
@@ -1405,7 +1426,7 @@ PPCODE:
 				av_push( av, newSVpv( db, 0 ) );
 				// todo: add, detect "views"
 				av_push( av, newSVpvn( "table", 5 ) );
-				XPUSHs( newRV( (SV *) av ) );
+				XPUSHs( sv_2mortal( newRV( (SV *) av ) ) );
 			}
 		}
 		mysql_free_result( res );
@@ -1463,7 +1484,7 @@ PPCODE:
 		p1 = my_strcpy( p1, wild );
 		p1 = my_strcpy( p1, "'" );
 	}
-	r = mysql_real_query( con->conid, sql, p1 - sql );
+	r = mysql_real_query( con->conid, sql, (DWORD) (p1 - sql) );
 	if( r == 0 ) {
 		res = mysql_store_result( con->conid );
 		numrows = (DWORD) mysql_num_rows( res );
@@ -1482,7 +1503,7 @@ PPCODE:
 			av_push( av, newSViv( strcmp( row[3], "UNI" ) == 0 ? 1 : 0 ) );
 			av_push( av, newSVpvn( row[1], strlen( row[1] ) ) );
 			av_push( av, newSViv( strstr( row[5], "auto_increment" ) != 0 ? 1 : 0 ) );
-			XPUSHs( newRV( (SV *) av ) );
+			XPUSHs( sv_2mortal( newRV( (SV *) av ) ) );
 		}
 		mysql_free_result( res );
 	}
@@ -1537,7 +1558,7 @@ PPCODE:
 	}
 	step = 0;
 retry:
-	r = mysql_real_query( con->conid, sql, p1 - sql );
+	r = mysql_real_query( con->conid, sql, (DWORD) (p1 - sql) );
 	switch( r ) {
 	case 0:
 		break;
@@ -1546,7 +1567,7 @@ retry:
 	case CR_SERVER_LOST:
 		if( ( con->client_flag & CLIENT_RECONNECT ) != 0 && step == 0 ) {
 			step ++;
-			r = (long) my_mysql_reconnect( con );
+			r = my_mysql_reconnect( con );
 			if( ! r ) goto error;
 			goto retry;
 		}
@@ -1568,7 +1589,7 @@ retry:
 			av_push( av, newSViv( 2 ) );
 		else
 			av_push( av, newSViv( 3 ) );
-		XPUSHs( newRV( (SV *) av ) );
+		XPUSHs( sv_2mortal( newRV( (SV *) av ) ) );
 	}
 	mysql_free_result( res );
 error:
@@ -1581,10 +1602,10 @@ error:
 
 char *
 sql_limit( sql, length, limit, offset = -1 )
-const char *sql
-unsigned long length
-long limit
-long offset
+    const char *sql;
+    unsigned long length;
+    long limit;
+    long offset;
 PREINIT:
 	char *res, *rp;
 	const char *fc;
@@ -1608,11 +1629,11 @@ CODE:
 		}
 		if( fc ) {
 			New( 1, res, fc - sql + 22, char );
-			rp = my_strcpyn( res, sql, fc - sql );
+			rp = my_strncpy( res, sql, (DWORD) (fc - sql) );
 		}
 		else {
 			New( 1, res, length + 22, char );
-			rp = my_strcpyn( res, sql, length );
+			rp = my_strncpy( res, sql, length );
 		}
 		if( offset >= 0 )
 			sprintf( rp, " LIMIT %li, %li", offset, limit );
@@ -1647,9 +1668,9 @@ OUTPUT:
 	RETVAL
 
 
-#/******************************************************************************
+#/*****************************************************************************
 # * error( [linkid] )
-# ******************************************************************************/
+# *****************************************************************************/
 
 void
 error( linkid = 0 )
@@ -1667,7 +1688,7 @@ CODE:
 	else {
 		error = MY_CXT.lasterror;
 	}
-	if( error && error != '\0' )
+	if( error && error[0] != '\0' )
 		ST(0) = sv_2mortal( newSVpvn( error, strlen( error ) ) );
 	else
 		ST(0) = &PL_sv_undef;
